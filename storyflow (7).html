@@ -1,0 +1,2586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Story Flow — automatic branching diagrams</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,500;0,600;0,700;1,500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<!-- Google Identity Services — used for Google Drive sign-in. See GOOGLE_CLIENT_ID
+     near the top of the script below for the one-time setup step required. -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  :root{
+    --canvas-bg:#EAEDF1;
+    --canvas-dot:#CDD3DB;
+    --card-bg:#FFFFFF;
+    --card-border:#D7DCE2;
+    --card-border-selected:#2F5D9C;
+    --ink:#1A1D23;
+    --ink-soft:#5B6270;
+    --ink-faint:#8890A0;
+    --accent:#2F5D9C;
+    --accent-soft:#E5EDF7;
+    --tag-scene:#4C51BF;
+    --tag-choice:#C2740A;
+    --tag-note:#6B7280;
+    --header-bg:#E3E7EC;
+    --header-border:#C7CDD6;
+    --var-color:#2F5D9C;
+    --panel-bg:#FFFFFF;
+    --panel-border:#DCE0E6;
+    --danger:#B3441E;
+    --font-mono:'IBM Plex Mono', ui-monospace, monospace;
+    --font-sans:'IBM Plex Sans', system-ui, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;margin:0;}
+  body{
+    font-family:var(--font-sans);
+    color:var(--ink);
+    background:var(--canvas-bg);
+    overflow:hidden;
+  }
+  #app{
+    display:flex;
+    flex-direction:column;
+    height:100vh;
+  }
+  /* ---------- Toolbar ---------- */
+  #toolbar{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    padding:10px 14px;
+    background:#FFFFFF;
+    border-bottom:1px solid var(--panel-border);
+    flex-wrap:wrap;
+    z-index:20;
+  }
+  .brand{
+    display:flex;
+    flex-direction:column;
+    margin-right:10px;
+    line-height:1.1;
+  }
+  .brand-title{
+    font-family:var(--font-mono);
+    font-weight:700;
+    font-size:15px;
+    letter-spacing:0.02em;
+  }
+  .brand-sub{
+    font-size:10.5px;
+    color:var(--ink-faint);
+    letter-spacing:0.03em;
+  }
+  .tb-sep{
+    width:1px;
+    align-self:stretch;
+    background:var(--panel-border);
+    margin:0 4px;
+  }
+  button.tb-btn{
+    font-family:var(--font-sans);
+    font-size:12.5px;
+    font-weight:500;
+    color:var(--ink);
+    background:#F4F5F7;
+    border:1px solid var(--panel-border);
+    border-radius:6px;
+    padding:7px 11px;
+    cursor:pointer;
+    display:flex;
+    align-items:center;
+    gap:6px;
+    white-space:nowrap;
+  }
+  button.tb-btn:hover{ background:#EBEDF1; }
+  button.tb-btn.primary{
+    background:var(--ink);
+    color:#fff;
+    border-color:var(--ink);
+  }
+  button.tb-btn.primary:hover{ background:#000; }
+  button.tb-btn.active{
+    background:var(--accent-soft);
+    border-color:var(--accent);
+    color:var(--accent);
+  }
+  button.tb-btn.danger{ color:var(--danger); }
+  button.tb-btn:disabled{ opacity:0.4; cursor:not-allowed; }
+  button.icon-btn{
+    width:26px;height:26px;border-radius:6px;border:1px solid var(--panel-border);
+    background:#F4F5F7; cursor:pointer; display:flex;align-items:center;justify-content:center;
+    font-family:var(--font-sans); font-size:14px; color:var(--ink-soft); line-height:1;
+  }
+  button.icon-btn:hover{ background:#EBEDF1; }
+  #spacer{ flex:1; }
+  #autosave-note{
+    font-size:11px;
+    color:var(--ink-faint);
+    font-family:var(--font-mono);
+    white-space:nowrap;
+  }
+
+  /* ---------- Body layout ---------- */
+  #body-row{
+    flex:1;
+    display:flex;
+    min-height:0;
+    position:relative;
+  }
+  #canvas-wrap{
+    flex:1;
+    position:relative;
+    overflow:hidden;
+    background-image: radial-gradient(var(--canvas-dot) 1.2px, transparent 1.2px);
+    background-size: 20px 20px;
+    cursor:grab;
+    touch-action:none;
+    user-select:none;
+    -webkit-user-select:none;
+    -moz-user-select:none;
+    -ms-user-select:none;
+  }
+  #canvas-wrap.panning{ cursor:grabbing; }
+  #canvas-wrap.connect-mode{ cursor:crosshair; }
+  svg#stage{ width:100%; height:100%; display:block; touch-action:none; }
+
+  .node-card{ cursor:grab; transition:opacity 0.15s ease; }
+  .node-card:active{ cursor:grabbing; }
+  .node-rect{ fill:var(--card-bg); stroke:var(--card-border); stroke-width:1.4; }
+  .node-card.selected .node-rect{ stroke:var(--card-border-selected); stroke-width:2; }
+  .node-card.connect-src .node-rect{ stroke:var(--accent); stroke-width:2; stroke-dasharray:4 3; }
+  .node-spine{ pointer-events:none; }
+  .title-line{ font-family:var(--font-mono); font-weight:700; fill:var(--ink); }
+  .subtitle-line{ font-family:var(--font-mono); font-weight:500; fill:var(--ink-soft); }
+  .body-line{ font-family:var(--font-sans); font-weight:400; fill:var(--ink); }
+  .var-line{ font-family:var(--font-mono); font-style:italic; font-weight:500; fill:var(--var-color); }
+  .header-rect{ fill:var(--header-bg); stroke:var(--header-border); stroke-width:1.2; }
+  .header-rect.selected{ stroke:var(--card-border-selected); stroke-width:2; }
+  .header-text{ font-family:var(--font-mono); font-weight:700; fill:var(--ink); letter-spacing:0.04em; }
+
+  .node-affordance{
+    opacity:0;
+    transition:opacity 0.1s;
+  }
+  .node-card:hover .node-affordance, .node-card.selected .node-affordance{ opacity:1; }
+  @media (pointer: coarse){
+    .node-card.selected .node-affordance{ opacity:1; }
+  }
+  .aff-bg{ fill:#fff; stroke:var(--panel-border); }
+  .aff-del .aff-bg:hover{ fill:#FBEAE3; stroke:var(--danger); }
+  .aff-add .aff-bg:hover{ fill:var(--accent-soft); stroke:var(--accent); }
+  .aff-sym{ font-family:var(--font-sans); font-size:13px; text-anchor:middle; pointer-events:none; }
+  .aff-del .aff-sym{ fill:var(--danger); }
+  .aff-add .aff-sym{ fill:var(--accent); }
+
+  .edge-path{ fill:none; stroke:#96A0AC; stroke-width:1.6; transition:opacity 0.15s ease, stroke 0.15s ease, stroke-width 0.15s ease; }
+  .edge-hit{ fill:none; stroke:transparent; stroke-width:12; cursor:pointer; }
+  .edge-hit.selected + .edge-path, .edge-path.selected{ stroke:var(--accent); stroke-width:2.2; }
+
+  /* Hover/select focus: when a node or edge is active, fade everything
+     not connected to it so the relevant path is easy to trace. */
+  #viewport.has-focus .edge-path.unrelated{ opacity:0.15; }
+  #viewport.has-focus .node-card.unrelated{ opacity:0.35; }
+
+  /* ---------- Side panel ---------- */
+  #panel{
+    width:300px;
+    min-width:300px;
+    background:var(--panel-bg);
+    border-left:1px solid var(--panel-border);
+    overflow-y:auto;
+    padding:16px 16px 24px;
+    display:flex;
+    flex-direction:column;
+    gap:12px;
+  }
+  #panel.hidden{ display:none; }
+  .panel-title{
+    font-family:var(--font-mono);
+    font-weight:700;
+    font-size:12px;
+    letter-spacing:0.06em;
+    color:var(--ink-faint);
+    text-transform:uppercase;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+  }
+  label.field-label{
+    font-size:11.5px;
+    font-weight:600;
+    color:var(--ink-soft);
+    display:block;
+    margin-bottom:4px;
+    letter-spacing:0.02em;
+  }
+  input[type=text], textarea, select{
+    width:100%;
+    font-family:var(--font-sans);
+    font-size:13px;
+    padding:7px 9px;
+    border:1px solid var(--panel-border);
+    border-radius:6px;
+    background:#FBFBFC;
+    color:var(--ink);
+    resize:vertical;
+  }
+  input[type=text]:focus, textarea:focus, select:focus{
+    outline:none; border-color:var(--accent); background:#fff;
+  }
+  textarea{ min-height:64px; line-height:1.4; }
+  .field{ display:flex; flex-direction:column; }
+  .tag-row{ display:flex; gap:6px; }
+  .tag-choice-btn{
+    flex:1;
+    font-family:var(--font-mono);
+    font-size:11px;
+    font-weight:600;
+    padding:6px 4px;
+    border-radius:5px;
+    border:1.4px solid var(--panel-border);
+    background:#fff;
+    cursor:pointer;
+    text-align:center;
+  }
+  .tag-choice-btn[data-tag=scene].active{ border-color:var(--tag-scene); color:var(--tag-scene); background:#EEEEFA; }
+  .tag-choice-btn[data-tag=choice].active{ border-color:var(--tag-choice); color:var(--tag-choice); background:#FBF1E2; }
+  .tag-choice-btn[data-tag=note].active{ border-color:var(--tag-note); color:var(--tag-note); background:#EEF0F2; }
+
+  .side-row{ gap:4px; }
+  .side-choice-btn{ font-size:10px; padding:6px 2px; }
+  .side-choice-btn.active{ border-color:var(--accent); color:var(--accent); background:var(--accent-soft); }
+
+  .var-row{ display:flex; gap:5px; align-items:center; }
+  .var-row input{ flex:1; }
+  .var-row button{
+    flex-shrink:0; width:24px;height:24px; border-radius:5px; border:1px solid var(--panel-border);
+    background:#F4F5F7; cursor:pointer; color:var(--ink-soft); font-size:13px;
+  }
+  .var-row button:hover{ background:#FBEAE3; color:var(--danger); }
+  #add-var-btn{
+    align-self:flex-start;
+    font-size:11.5px;
+    font-weight:600;
+    color:var(--accent);
+    background:none;
+    border:none;
+    cursor:pointer;
+    padding:2px 0;
+  }
+  .panel-actions{
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    margin-top:4px;
+    padding-top:12px;
+    border-top:1px solid var(--panel-border);
+  }
+  .panel-hint{
+    font-size:12px;
+    color:var(--ink-faint);
+    line-height:1.5;
+  }
+
+  /* ---------- Zoom controls ---------- */
+  #zoom-controls{
+    position:absolute;
+    right:14px;
+    bottom:14px;
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+    z-index:10;
+  }
+  #connect-banner{
+    position:absolute;
+    top:12px;
+    left:50%;
+    transform:translateX(-50%);
+    background:var(--ink);
+    color:#fff;
+    font-size:12.5px;
+    font-family:var(--font-sans);
+    padding:8px 14px;
+    border-radius:20px;
+    display:none;
+    align-items:center;
+    gap:10px;
+    z-index:15;
+    box-shadow:0 4px 14px rgba(0,0,0,0.18);
+  }
+  #connect-banner.show{ display:flex; }
+  #connect-banner button{
+    background:rgba(255,255,255,0.14);
+    border:none; color:#fff; border-radius:12px; padding:3px 10px; font-size:11.5px; cursor:pointer;
+  }
+
+  /* ---------- Help modal ---------- */
+  #help-overlay{
+    position:fixed; inset:0; background:rgba(20,22,26,0.45);
+    display:none; align-items:center; justify-content:center; z-index:100;
+  }
+  #help-overlay.show{ display:flex; }
+  #help-modal{
+    background:#fff; border-radius:10px; width:min(480px, 90vw);
+    padding:22px 24px; box-shadow:0 20px 60px rgba(0,0,0,0.3);
+  }
+  #help-modal h2{
+    font-family:var(--font-mono); font-size:16px; margin:0 0 4px;
+  }
+  #help-modal p.sub{ color:var(--ink-faint); font-size:12px; margin:0 0 16px; }
+  #help-modal ol{ padding-left:18px; margin:0 0 16px; font-size:13px; line-height:1.7; }
+  #help-modal ol li b{ font-family:var(--font-mono); }
+  #help-close{
+    background:var(--ink); color:#fff; border:none; border-radius:6px; padding:8px 16px;
+    font-size:13px; cursor:pointer; float:right;
+  }
+
+  /* ---------- File-link modal ---------- */
+  #filelink-overlay{
+    position:fixed; inset:0; background:rgba(20,22,26,0.45);
+    display:none; align-items:center; justify-content:center; z-index:100;
+  }
+  #filelink-overlay.show{ display:flex; }
+  #filelink-modal{
+    background:#fff; border-radius:10px; width:min(420px, 90vw);
+    padding:22px 24px; box-shadow:0 20px 60px rgba(0,0,0,0.3);
+  }
+  #filelink-modal h2{ font-family:var(--font-mono); font-size:16px; margin:0 0 4px; }
+  #filelink-modal p.sub{ color:var(--ink-faint); font-size:12px; margin:0 0 16px; line-height:1.5; }
+  #filelink-unsupported{
+    font-size:12.5px; line-height:1.6; color:var(--ink-soft);
+    background:#F4F5F7; border:1px solid var(--panel-border); border-radius:8px;
+    padding:10px 12px; margin-bottom:16px;
+  }
+  .filelink-actions{ display:flex; flex-direction:column; gap:8px; margin-bottom:14px; }
+  #filelink-standalone-notice{
+    font-size:12px; line-height:1.5; color:var(--ink-soft);
+    background:#F4F5F7; border:1px solid var(--panel-border); border-radius:8px;
+    padding:8px 10px; margin:-4px 0 14px;
+  }
+  #filelink-close{
+    background:none; color:var(--ink-soft); border:1px solid var(--panel-border); border-radius:6px;
+    padding:7px 14px; font-size:12.5px; cursor:pointer; float:right;
+  }
+  #filelink-close:hover{ background:#F4F5F7; }
+
+  /* ---------- Google Drive file picker modal ---------- */
+  #drivepicker-overlay{
+    position:fixed; inset:0; background:rgba(20,22,26,0.45);
+    display:none; align-items:center; justify-content:center; z-index:110;
+  }
+  #drivepicker-overlay.show{ display:flex; }
+  #drivepicker-modal{
+    background:#fff; border-radius:10px; width:min(420px, 90vw); max-height:70vh;
+    padding:22px 24px; box-shadow:0 20px 60px rgba(0,0,0,0.3);
+    display:flex; flex-direction:column;
+  }
+  #drivepicker-modal h2{ font-family:var(--font-mono); font-size:16px; margin:0 0 4px; }
+  #drivepicker-list{ overflow-y:auto; display:flex; flex-direction:column; gap:6px; margin:10px 0 14px; }
+  .drivepicker-row{
+    display:flex; flex-direction:column; align-items:flex-start; text-align:left;
+    width:100%; min-height:44px; padding:8px 12px;
+    border:1px solid var(--panel-border); border-radius:8px; background:#fff;
+    cursor:pointer; font-family:var(--font-sans);
+  }
+  .drivepicker-row:hover{ background:#F4F5F7; }
+  .drivepicker-row .name{ color:var(--ink); font-size:13px; font-weight:500; }
+  .drivepicker-row .meta{ color:var(--ink-faint); font-size:11px; margin-top:2px; }
+  #drivepicker-empty{ color:var(--ink-faint); font-size:12.5px; padding:8px 0 4px; }
+  #drivepicker-close{
+    background:none; color:var(--ink-soft); border:1px solid var(--panel-border); border-radius:6px;
+    padding:7px 14px; font-size:12.5px; cursor:pointer; align-self:flex-end;
+  }
+  #drivepicker-close:hover{ background:#F4F5F7; }
+
+  @media (max-width: 820px){
+    #panel{
+      position:fixed; left:0; right:0; bottom:0; top:auto;
+      width:auto; min-width:0; max-height:70vh;
+      border-left:none; border-top:1px solid var(--panel-border);
+      border-radius:14px 14px 0 0;
+      box-shadow:0 -8px 30px rgba(0,0,0,0.18);
+      z-index:30;
+    }
+    .brand-sub{ display:none; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="toolbar">
+    <div class="brand">
+      <div class="brand-title">STORY FLOW</div>
+      <div class="brand-sub">drag-anywhere branching diagrams</div>
+    </div>
+    <div class="tb-sep"></div>
+    <button class="tb-btn primary" id="btn-add-root">+ Root node</button>
+    <button class="tb-btn" id="btn-add-header">+ Section label</button>
+    <button class="tb-btn" id="btn-connect">⤍ Connect</button>
+    <button class="tb-btn" id="btn-auto-arrange">⇕ Auto-arrange</button>
+    <div class="tb-sep"></div>
+    <button class="tb-btn" id="btn-export-png">Export PNG</button>
+    <button class="tb-btn" id="btn-export-svg">Export SVG</button>
+    <button class="tb-btn" id="btn-export-json">Export JSON</button>
+    <button class="tb-btn" id="btn-import-json">Import JSON</button>
+    <input type="file" id="file-import" accept="application/json" style="display:none;">
+    <div class="tb-sep"></div>
+    <button class="tb-btn danger" id="btn-new">New graph</button>
+    <div id="spacer"></div>
+    <button class="tb-btn" id="btn-link-file" title="Autosave straight to a JSON file on your device, or a file in Google Drive">📄 Link file</button>
+    <span id="autosave-note">saved on this device</span>
+    <button class="icon-btn" id="btn-drive-reconnect" title="Reconnect Google Drive" style="display:none;">↻</button>
+    <button class="icon-btn" id="btn-help" title="How this works">?</button>
+  </div>
+
+  <div id="body-row">
+    <div id="canvas-wrap">
+      <div id="connect-banner">
+        <span id="connect-banner-text">Click a node to start a connection</span>
+        <button id="connect-cancel">Cancel</button>
+      </div>
+      <svg id="stage" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arrowhead" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+            <path d="M0,0 L7,3 L0,6 Z" fill="#7C8695"></path>
+          </marker>
+        </defs>
+        <g id="viewport"></g>
+      </svg>
+      <div id="zoom-controls">
+        <button class="icon-btn" id="btn-zoom-in">+</button>
+        <button class="icon-btn" id="btn-zoom-out">−</button>
+        <button class="icon-btn" id="btn-fit" title="Fit to view">⤢</button>
+      </div>
+    </div>
+
+    <div id="panel">
+      <div id="editor-content" style="display:none;"></div>
+    </div>
+  </div>
+</div>
+
+<div id="help-overlay">
+  <div id="help-modal">
+    <h2>How Story Flow works</h2>
+    <p class="sub">Everything lives on a free grid — drag anything, anywhere.</p>
+    <ol>
+      <li>Drag any card or section label to reposition it. Positions snap to the grid so things stay tidy.</li>
+      <li><b>+ Root node</b> creates a new card, placed below everything else on the board by default.</li>
+      <li>Select a card, then use <b>Add child</b> in the side panel to grow the tree — it's placed just under its parent.</li>
+      <li><b>Connect</b> in the toolbar links two existing cards — useful when branches rejoin, like two choices leading to the same next scene.</li>
+      <li>Edit title, body text, and <b>variables</b> (e.g. <i>neighbour_helpful = TRUE</i>) in the side panel.</li>
+      <li><b>+ Section label</b> adds a header bar, like an act or chapter title — also freely draggable.</li>
+      <li><b>Auto-arrange</b> automatically lays everything out neatly if you want to start fresh — you can keep dragging afterwards.</li>
+      <li>Export a PNG/SVG image any time, or a JSON file to back up and re-import your work later.</li>
+    </ol>
+    <button id="help-close">Got it</button>
+  </div>
+</div>
+
+<div id="filelink-overlay">
+  <div id="filelink-modal">
+    <h2>Autosave to a file</h2>
+    <p class="sub" id="filelink-sub">Link a JSON file on your device — every change autosaves straight to it, no more manual exports.</p>
+    <div id="filelink-unsupported" style="display:none;">
+      This browser (or the window this app is running in) doesn't allow saving straight to a local file. You can still use <b>Export JSON</b> to download a copy any time, or link a Google Drive file below.
+    </div>
+    <div id="filelink-standalone-notice" style="display:none;">
+      Google Drive sign-in works best opened in Safari/Chrome directly, not from the home-screen icon.
+    </div>
+    <div id="filelink-actions" class="filelink-actions">
+      <button class="tb-btn primary" id="filelink-create">Create new file</button>
+      <button class="tb-btn" id="filelink-open">Open existing file…</button>
+      <button class="tb-btn danger" id="filelink-unlink" style="display:none;">Stop autosaving to this file</button>
+    </div>
+    <div id="filelink-drive-actions" class="filelink-actions">
+      <button class="tb-btn primary" id="filelink-drive-create">Save new to Google Drive</button>
+      <button class="tb-btn" id="filelink-drive-open">Open from Google Drive…</button>
+      <button class="tb-btn danger" id="filelink-drive-unlink" style="display:none;">Stop autosaving to Drive</button>
+      <button class="tb-btn" id="filelink-drive-signout" style="display:none;">Disconnect Google account</button>
+    </div>
+    <button id="filelink-close">Not now</button>
+  </div>
+</div>
+
+<div id="drivepicker-overlay">
+  <div id="drivepicker-modal">
+    <h2>Open from Google Drive</h2>
+    <p class="sub">Pick a saved Story Flow file.</p>
+    <div id="drivepicker-list"></div>
+    <div id="drivepicker-empty" style="display:none;">No saved files found in the "StoryFlow Saves" folder yet.</div>
+    <button id="drivepicker-close">Cancel</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------------------------------------------------------------
+  // State
+  // ---------------------------------------------------------------
+  const STORAGE_KEY = "graph-v2"; // bumped so old autosaves of the previous default example don't shadow the new starter content
+  let state = null;
+  let selection = { type: null, id: null }; // type: 'node' | 'edge'
+  let hovered = null; // { type: 'node' | 'edge', id } — mouse-hover preview, separate from selection
+  let connectMode = false;
+  let connectSource = null;
+  let view = { x: 60, y: 40, scale: 1 };
+  let isPanning = false, panStart = null, viewStart = null;
+  let saveTimer = null;
+
+  // File System Access API — lets this page write straight to a local
+  // JSON file instead of only the sandboxed per-device storage below.
+  // It's only usable in a top-level browser tab; browsers block it
+  // inside a cross-origin iframe (e.g. an embedded preview), so this
+  // is treated as a progressive enhancement with a graceful fallback.
+  const FS_ACCESS_SUPPORTED = !!(window.showSaveFilePicker && window.showOpenFilePicker);
+  let linkedFileHandle = null;
+  let linkedFileName = null;
+
+  // ---------------------------------------------------------------
+  // Google Drive linking — an alternative autosave target to the local
+  // file above. Mutually exclusive with it: linking one clears the other.
+  //
+  // ONE-TIME SETUP REQUIRED: paste your own OAuth Client ID below. Create
+  // one at https://console.cloud.google.com/apis/credentials — "Create
+  // Credentials" → "OAuth client ID" → type "Web application" — and add
+  // this page's real https:// origin (e.g. https://you.github.io, no
+  // path) under "Authorized JavaScript origins". Until this is filled in,
+  // the Google Drive buttons will show a setup reminder instead of
+  // signing in.
+  // ---------------------------------------------------------------
+  const GOOGLE_CLIENT_ID = "YOUR_CLIENT_ID.apps.googleusercontent.com";
+  const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+  const DRIVE_FOLDER_NAME = "StoryFlow Saves";
+  const DRIVE_LINK_KEY = "drive-link-v1";
+
+  let gisReady = false;
+  let driveTokenClient = null;
+  let driveAuthResolve = null, driveAuthReject = null;
+  let driveAccessToken = null; // in-memory only — never persisted
+  let driveFolderId = null;
+  let linkedDriveFileId = null;
+  let linkedDriveFileName = null;
+
+  function uid(prefix){
+    return prefix + "_" + Math.random().toString(36).slice(2, 9);
+  }
+
+  function starterState(){
+    const n = {};
+    const mk = (id, x, y, obj) => { n[id] = Object.assign({ id, kind:"node", tag:"scene", title:"", subtitle:"", body:"", vars:[], x, y }, obj); };
+    mk("h1", 0, 0, { kind:"header", title:"SECTION LABEL — DRAG ME" });
+    mk("n1", 180, 100, { title:"SCENE", subtitle:"TAP A CARD TO EDIT IT", body:"Edit title, body text, and variables in the panel on the right. Drag any card anywhere — position is entirely up to you.", vars:[] });
+    mk("n2", 20, 340, { tag:"choice", title:"CHOICE", body:"Tag a card \u201cChoice\u201d and give it a variable to track what the player picked.", vars:[{k:"example_flag",v:"TRUE"}] });
+    mk("n3", 340, 340, { tag:"choice", title:"ANOTHER CHOICE", body:"Branches don't need to match — add as many paths as the scene calls for.", vars:[{k:"example_flag",v:"FALSE"}] });
+    mk("n4", 180, 580, { title:"NEXT SCENE", subtitle:"BRANCHES CAN REJOIN", body:"Use Connect in the toolbar to link any two existing cards — handy when choices lead to the same place.", vars:[] });
+    const edges = [
+      { id: uid("e"), from:"n1", to:"n2" },
+      { id: uid("e"), from:"n1", to:"n3" },
+      { id: uid("e"), from:"n2", to:"n4" },
+      { id: uid("e"), from:"n3", to:"n4" },
+    ];
+    return { nodes: n, edges };
+  }
+
+  function emptyState(){
+    return { nodes: {}, edges: [] };
+  }
+
+  function cloneState(s){ return JSON.parse(JSON.stringify(s)); }
+
+  async function ensureWritePermission(handle){
+    const opts = { mode: "readwrite" };
+    try{
+      if((await handle.queryPermission(opts)) === "granted") return true;
+      if((await handle.requestPermission(opts)) === "granted") return true;
+    }catch(e){ /* fall through to false */ }
+    return false;
+  }
+
+  async function writeGraphToLinkedFile(){
+    if(linkedFileHandle){
+      try{
+        const ok = await ensureWritePermission(linkedFileHandle);
+        if(!ok) return false;
+        const writable = await linkedFileHandle.createWritable();
+        await writable.write(JSON.stringify(state, null, 2));
+        await writable.close();
+        return true;
+      }catch(e){
+        return false;
+      }
+    }
+    if(linkedDriveFileId){
+      try{
+        return await driveUpdateFile(linkedDriveFileId, state);
+      }catch(e){
+        return false;
+      }
+    }
+    return false;
+  }
+
+  function updateLinkedFileUI(){
+    const btn = document.getElementById("btn-link-file");
+    const unlinkBtn = document.getElementById("filelink-unlink");
+    const driveUnlinkBtn = document.getElementById("filelink-drive-unlink");
+    const driveSignoutBtn = document.getElementById("filelink-drive-signout");
+    if(linkedFileHandle){
+      btn.textContent = `📄 ${linkedFileName}`;
+      btn.classList.add("active");
+      unlinkBtn.style.display = "block";
+    } else if(linkedDriveFileId){
+      btn.textContent = `☁️ ${linkedDriveFileName}`;
+      btn.classList.add("active");
+      unlinkBtn.style.display = "none";
+    } else {
+      btn.textContent = "📄 Link file";
+      btn.classList.remove("active");
+      unlinkBtn.style.display = "none";
+    }
+    if(driveUnlinkBtn) driveUnlinkBtn.style.display = linkedDriveFileId ? "block" : "none";
+    if(driveSignoutBtn) driveSignoutBtn.style.display = driveAccessToken ? "block" : "none";
+  }
+
+  function unlinkFile(){
+    linkedFileHandle = null;
+    linkedFileName = null;
+    updateLinkedFileUI();
+    scheduleSave();
+  }
+
+  function persistDriveLink(){
+    try{
+      if(linkedDriveFileId){
+        localStorage.setItem(DRIVE_LINK_KEY, JSON.stringify({ id: linkedDriveFileId, name: linkedDriveFileName }));
+      } else {
+        localStorage.removeItem(DRIVE_LINK_KEY);
+      }
+    }catch(e){ /* ignore — non-fatal, the link just won't survive reload */ }
+  }
+
+  function unlinkDrive(){
+    linkedDriveFileId = null;
+    linkedDriveFileName = null;
+    persistDriveLink();
+    updateLinkedFileUI();
+    scheduleSave();
+  }
+
+  // Creates a brand-new file via the save dialog, writes the current
+  // graph to it, and links it as the ongoing autosave target.
+  async function linkNewFile(){
+    try{
+      const handle = await window.showSaveFilePicker({
+        suggestedName: "story-flow.json",
+        types: [{ description: "Story Flow JSON", accept: { "application/json": [".json"] } }]
+      });
+      const ok = await ensureWritePermission(handle);
+      if(!ok) throw new Error("permission denied");
+      linkedFileHandle = handle;
+      linkedFileName = handle.name;
+      linkedDriveFileId = null; linkedDriveFileName = null; persistDriveLink(); // exclusive with Drive link
+      await writeGraphToLinkedFile();
+      updateLinkedFileUI();
+      return true;
+    }catch(err){
+      if(err && err.name === "AbortError") return false;
+      alert("Couldn't create that file here — this browser (or window) may not allow direct file access. You can still use Export JSON.");
+      return false;
+    }
+  }
+
+  // Opens an existing Story Flow JSON, loads it as the current graph,
+  // and links it as the ongoing autosave target.
+  async function linkExistingFile(){
+    try{
+      const [handle] = await window.showOpenFilePicker({
+        types: [{ description: "Story Flow JSON", accept: { "application/json": [".json"] } }],
+        multiple: false
+      });
+      const ok = await ensureWritePermission(handle);
+      if(!ok) throw new Error("permission denied");
+      const file = await handle.getFile();
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if(!parsed.nodes || !parsed.edges) throw new Error("bad format");
+      state = parsed;
+      normalizeState();
+      linkedFileHandle = handle;
+      linkedFileName = handle.name;
+      linkedDriveFileId = null; linkedDriveFileName = null; persistDriveLink(); // exclusive with Drive link
+      selection = { type: null, id: null };
+      updateLinkedFileUI();
+      scheduleSave(); renderAll(); fitToView();
+      return true;
+    }catch(err){
+      if(err && err.name === "AbortError") return false;
+      alert("That file couldn't be opened as a Story Flow JSON. Nothing was changed.");
+      return false;
+    }
+  }
+
+  // ---------------------------------------------------------------
+  // Google Drive: auth (Google Identity Services token client)
+  // ---------------------------------------------------------------
+
+  // Initialized eagerly on page load — NOT lazily on first tap — so that
+  // by the time someone taps a Drive button, google.accounts.oauth2
+  // already exists and requestAccessToken() can run with nothing async
+  // before it. This matters on mobile: Safari/Chrome are quick to block
+  // popups that open after an await gap rather than directly inside a
+  // click handler.
+  function initGis(){
+    if(!(window.google && google.accounts && google.accounts.oauth2)) return false;
+    driveTokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: DRIVE_SCOPE,
+      callback: (resp) => {
+        if(!driveAuthResolve) return; // stray callback, nothing pending
+        if(resp.error) driveAuthReject(new Error(resp.error));
+        else { driveAccessToken = resp.access_token; driveAuthResolve(resp.access_token); }
+        driveAuthResolve = driveAuthReject = null;
+      },
+    });
+    gisReady = true;
+    return true;
+  }
+  // Poll briefly in case the GIS <script> tag (loaded in <head>) hasn't
+  // finished loading yet when the page boots — it's tiny and async, so
+  // this is usually a single retry at most.
+  (function waitForGis(){ if(!initGis()) setTimeout(waitForGis, 100); })();
+
+  // Call this as the FIRST statement of a click handler — nothing async
+  // before it — so the resulting popup still counts as user-initiated on
+  // mobile browsers.
+  function driveSignIn(interactive){
+    if(GOOGLE_CLIENT_ID.indexOf("YOUR_CLIENT_ID") === 0){
+      return Promise.reject(new Error("Google Drive isn't set up yet — paste your OAuth Client ID into GOOGLE_CLIENT_ID near the top of the script (see the comment there)."));
+    }
+    if(!gisReady){
+      return Promise.reject(new Error("Google sign-in isn't ready yet — try again in a moment."));
+    }
+    return new Promise((resolve, reject) => {
+      driveAuthResolve = resolve; driveAuthReject = reject;
+      // prompt:"" attempts a silent/no-UI reauth for a returning user in
+      // the same browser profile; on iOS Safari this is unreliable and
+      // will often fall through to needing the consent popup instead.
+      driveTokenClient.requestAccessToken({ prompt: interactive ? "consent" : "" });
+    });
+  }
+
+  function driveSignOut(){
+    if(driveAccessToken && window.google && google.accounts){
+      google.accounts.oauth2.revoke(driveAccessToken, () => {});
+    }
+    driveAccessToken = null;
+    unlinkDrive();
+  }
+
+  async function driveFetch(url, options){
+    options = options || {};
+    if(!driveAccessToken) await driveSignIn(true);
+    let res = await fetch(url, {
+      ...options,
+      headers: Object.assign({}, options.headers, { Authorization: "Bearer " + driveAccessToken }),
+    });
+    if(res.status === 401){
+      // token expired — re-auth once (silently if possible), then retry.
+      await driveSignIn(false);
+      res = await fetch(url, {
+        ...options,
+        headers: Object.assign({}, options.headers, { Authorization: "Bearer " + driveAccessToken }),
+      });
+    }
+    return res;
+  }
+
+  // ---------------------------------------------------------------
+  // Google Drive: file operations
+  // ---------------------------------------------------------------
+  async function driveGetOrCreateFolder(){
+    if(driveFolderId) return driveFolderId;
+    const q = encodeURIComponent("mimeType='application/vnd.google-apps.folder' and name='" + DRIVE_FOLDER_NAME + "' and trashed=false");
+    const listRes = await driveFetch("https://www.googleapis.com/drive/v3/files?q=" + q + "&fields=files(id,name)");
+    const listData = await listRes.json();
+    if(listData.files && listData.files.length){
+      driveFolderId = listData.files[0].id;
+      return driveFolderId;
+    }
+    const createRes = await driveFetch("https://www.googleapis.com/drive/v3/files", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: DRIVE_FOLDER_NAME, mimeType: "application/vnd.google-apps.folder" }),
+    });
+    const created = await createRes.json();
+    driveFolderId = created.id;
+    return driveFolderId;
+  }
+
+  async function driveCreateFile(name, dataObj){
+    const folderId = await driveGetOrCreateFolder();
+    const metadata = { name: name, mimeType: "application/json", parents: [folderId] };
+    const boundary = "storyflow_" + Math.random().toString(36).slice(2);
+    const body =
+      "--" + boundary + "\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n" +
+      JSON.stringify(metadata) +
+      "\r\n--" + boundary + "\r\nContent-Type: application/json\r\n\r\n" +
+      JSON.stringify(dataObj, null, 2) +
+      "\r\n--" + boundary + "--";
+    const res = await driveFetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name", {
+      method: "POST",
+      headers: { "Content-Type": "multipart/related; boundary=" + boundary },
+      body: body,
+    });
+    if(!res.ok) throw new Error("Drive create failed");
+    return res.json();
+  }
+
+  async function driveUpdateFile(fileId, dataObj){
+    const res = await driveFetch("https://www.googleapis.com/upload/drive/v3/files/" + fileId + "?uploadType=media", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(dataObj, null, 2),
+    });
+    return res.ok;
+  }
+
+  async function driveListSaveFiles(){
+    const folderId = await driveGetOrCreateFolder();
+    const q = encodeURIComponent("'" + folderId + "' in parents and trashed=false");
+    const res = await driveFetch("https://www.googleapis.com/drive/v3/files?q=" + q + "&orderBy=modifiedTime desc&fields=files(id,name,modifiedTime)");
+    const data = await res.json();
+    return data.files || [];
+  }
+
+  async function driveReadFile(fileId){
+    const res = await driveFetch("https://www.googleapis.com/drive/v3/files/" + fileId + "?alt=media");
+    if(!res.ok) throw new Error("Drive read failed");
+    return res.json();
+  }
+
+  // ---------------------------------------------------------------
+  // Google Drive: linking (mirrors the local-file link flow above)
+  // ---------------------------------------------------------------
+  async function linkNewDriveFile(){
+    try{
+      await driveSignIn(true);
+    }catch(err){
+      alert(err && err.message ? err.message : "Couldn't connect to Google Drive.");
+      return false;
+    }
+    try{
+      const created = await driveCreateFile("story-flow.json", state);
+      linkedFileHandle = null; linkedFileName = null; // exclusive with local-file link
+      linkedDriveFileId = created.id;
+      linkedDriveFileName = created.name;
+      persistDriveLink();
+      updateLinkedFileUI();
+      return true;
+    }catch(err){
+      alert("Connected to Google, but couldn't create the file in Drive. Try again.");
+      return false;
+    }
+  }
+
+  async function linkExistingDriveFile(){
+    try{
+      await driveSignIn(true);
+    }catch(err){
+      alert(err && err.message ? err.message : "Couldn't connect to Google Drive.");
+      return;
+    }
+    try{
+      const files = await driveListSaveFiles();
+      openDrivePicker(files);
+    }catch(err){
+      alert("Connected to Google, but couldn't list files in Drive. Try again.");
+    }
+  }
+
+  async function selectDriveFile(file){
+    try{
+      const parsed = await driveReadFile(file.id);
+      if(!parsed.nodes || !parsed.edges) throw new Error("bad format");
+      state = parsed;
+      normalizeState();
+      linkedFileHandle = null; linkedFileName = null; // exclusive with local-file link
+      linkedDriveFileId = file.id;
+      linkedDriveFileName = file.name;
+      persistDriveLink();
+      selection = { type: null, id: null };
+      updateLinkedFileUI();
+      scheduleSave(); renderAll(); fitToView();
+      closeDrivePicker();
+      closeFileLinkModal();
+    }catch(err){
+      alert("That file couldn't be opened as a Story Flow JSON. Nothing was changed.");
+    }
+  }
+
+  function scheduleSave(){
+    clearTimeout(saveTimer);
+    const note = document.getElementById("autosave-note");
+    const reconnectBtn = document.getElementById("btn-drive-reconnect");
+    note.textContent = "saving…";
+    saveTimer = setTimeout(async () => {
+      let deviceOk = true;
+      try{
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      }catch(e){
+        deviceOk = false;
+      }
+      if(linkedFileHandle || linkedDriveFileId){
+        const fileOk = await writeGraphToLinkedFile();
+        const label = linkedFileHandle ? linkedFileName : linkedDriveFileName;
+        const failMsg = linkedDriveFileId ? "Drive autosave failed — reconnect" : "file autosave failed — reconnect file";
+        note.textContent = fileOk ? `saved to ${label}` : failMsg;
+        if(reconnectBtn) reconnectBtn.style.display = (!fileOk && linkedDriveFileId) ? "inline-block" : "none";
+      } else {
+        note.textContent = deviceOk ? "saved on this device" : "autosave unavailable";
+        if(reconnectBtn) reconnectBtn.style.display = "none";
+      }
+    }, 350);
+  }
+
+  async function loadInitial(){
+    try{
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if(raw){
+        state = JSON.parse(raw);
+        normalizeState();
+      }
+    }catch(e){ /* no saved graph yet */ }
+    if(!state) state = starterState();
+    try{
+      const rawLink = localStorage.getItem(DRIVE_LINK_KEY);
+      if(rawLink){
+        const link = JSON.parse(rawLink);
+        if(link && link.id && link.name){
+          linkedDriveFileId = link.id;
+          linkedDriveFileName = link.name;
+        }
+      }
+    }catch(e){ /* ignore — Drive link just won't be restored */ }
+  }
+
+  // ---------------------------------------------------------------
+  // Graph helpers
+  // ---------------------------------------------------------------
+  function graphNodes(){ return Object.values(state.nodes).filter(n => n.kind === "node"); }
+  function headerNodes(){ return Object.values(state.nodes).filter(n => n.kind === "header"); }
+
+  // Fills in x/y (and a seq for ordering) for any node missing them, e.g.
+  // after importing an older export. Newly-missing items get stacked below
+  // whatever already has a position.
+  function normalizeState(){
+    if(!state.edges) state.edges = [];
+    if(!state.nodes) state.nodes = {};
+    let seqCounter = 0;
+    Object.values(state.nodes).forEach(n => {
+      if(typeof n.seq !== "number") n.seq = seqCounter;
+      seqCounter = Math.max(seqCounter, n.seq + 1);
+    });
+    state.nextSeq = seqCounter;
+    Object.values(state.nodes).forEach(n => {
+      if(typeof n.x !== "number" || typeof n.y !== "number"){
+        const width = n.kind === "header" ? measureHeader(n).width : NODE_WIDTH;
+        const height = n.kind === "header" ? 42 : measureNode(n).height;
+        const spot = findSpotBelowAll(width, height);
+        n.x = spot.x; n.y = spot.y;
+      }
+    });
+  }
+
+  function takeSeq(){
+    if(typeof state.nextSeq !== "number") state.nextSeq = 0;
+    return state.nextSeq++;
+  }
+
+  function addEdgeSafe(fromId, toId){
+    if(fromId === toId) return false;
+    if(state.edges.some(e => e.from === fromId && e.to === toId)) return false;
+    state.edges.push({ id: uid("e"), from: fromId, to: toId });
+    return true;
+  }
+
+  function deleteNode(id){
+    delete state.nodes[id];
+    state.edges = state.edges.filter(e => e.from !== id && e.to !== id);
+    if(selection.id === id) selection = { type:null, id:null };
+  }
+  function deleteEdge(id){
+    state.edges = state.edges.filter(e => e.id !== id);
+    if(selection.id === id) selection = { type:null, id:null };
+  }
+
+  // ---------------------------------------------------------------
+  // Text measuring & node sizing
+  // ---------------------------------------------------------------
+  const measureCanvas = document.createElement("canvas");
+  const mctx = measureCanvas.getContext("2d");
+
+  const NODE_WIDTH = 232;
+  const PAD_X = 15, PAD_Y = 12;
+  const TITLE_LH = 18, BODY_LH = 17, VAR_LH = 16;
+  const GAP_AFTER_TITLE = 8, GAP_AFTER_BODY = 8;
+  const SPINE_W = 5;
+
+  function wrapText(text, font, maxWidth){
+    mctx.font = font;
+    const out = [];
+    (text || "").split("\n").forEach(paragraph => {
+      if(paragraph.trim() === ""){ out.push(""); return; }
+      const words = paragraph.split(/\s+/);
+      let cur = "";
+      words.forEach(w => {
+        const test = cur ? cur + " " + w : w;
+        if(mctx.measureText(test).width > maxWidth && cur){
+          out.push(cur);
+          cur = w;
+        } else {
+          cur = test;
+        }
+      });
+      if(cur) out.push(cur);
+    });
+    return out;
+  }
+
+  function measureNode(node){
+    const innerW = NODE_WIDTH - PAD_X * 2 - SPINE_W;
+    const titleLines = [node.title || "Untitled"];
+    if(node.subtitle) titleLines.push(node.subtitle);
+    const bodyLines = wrapText(node.body, "500 12.5px 'IBM Plex Sans'", innerW);
+    const varStrings = (node.vars || []).filter(v => v.k).map(v => v.k + " = " + (v.v || ""));
+    const varLines = [];
+    varStrings.forEach(s => varLines.push(...wrapText(s, "italic 500 11.5px 'IBM Plex Mono'", innerW)));
+
+    let h = PAD_Y * 2 + titleLines.length * TITLE_LH;
+    if(bodyLines.length) h += GAP_AFTER_TITLE + bodyLines.length * BODY_LH;
+    if(varLines.length) h += GAP_AFTER_BODY + varLines.length * VAR_LH;
+    return { width: NODE_WIDTH, height: Math.max(h, 46), titleLines, bodyLines, varLines };
+  }
+
+  function measureHeader(node, forcedWidth){
+    mctx.font = "700 13.5px 'IBM Plex Mono'";
+    const textW = mctx.measureText(node.title || "Untitled").width;
+    const width = Math.max(forcedWidth || 0, 220, textW + 48);
+    return { width, height: 42 };
+  }
+
+  // ---------------------------------------------------------------
+  // Placement + grid
+  // ---------------------------------------------------------------
+  const GRID_SIZE = 20;
+  const H_GAP = 34, V_GAP = 76, BLOCK_GAP = 54;
+
+  function snap(v){ return Math.round(v / GRID_SIZE) * GRID_SIZE; }
+
+  function allBoxesExceptId(excludeId){
+    const boxes = [];
+    graphNodes().forEach(n => { if(n.id !== excludeId){ const d = measureNode(n); boxes.push({ x: n.x || 0, y: n.y || 0, width: d.width, height: d.height }); } });
+    headerNodes().forEach(h => { if(h.id !== excludeId){ const d = measureHeader(h); boxes.push({ x: h.x || 0, y: h.y || 0, width: d.width, height: d.height }); } });
+    return boxes;
+  }
+
+  function overlapsAny(x, y, width, height, boxes, margin){
+    return boxes.some(b => !(x + width + margin <= b.x || b.x + b.width + margin <= x ||
+                              y + height + margin <= b.y || b.y + b.height + margin <= y));
+  }
+
+  // Default spot for a brand-new root node or section label: below
+  // everything currently on the board.
+  function findSpotBelowAll(width, height){
+    const boxes = allBoxesExceptId(null);
+    let y = 0;
+    if(boxes.length){ y = Math.max(...boxes.map(b => b.y + b.height)) + 60; }
+    return { x: 0, y: snap(y) };
+  }
+
+  // Default spot for a new child node: just under its parent, nudged
+  // right if that spot is already taken.
+  function findSpotNearParent(parent, width, height){
+    const boxes = allBoxesExceptId(parent.id);
+    let x = snap(parent.x || 0);
+    const y = snap((parent.y || 0) + measureNode(parent).height + 60);
+    let guard = 0;
+    while(overlapsAny(x, y, width, height, boxes, GRID_SIZE) && guard < 60){
+      x += width + 40;
+      guard++;
+    }
+    return { x: snap(x), y };
+  }
+
+  // ---------------------------------------------------------------
+  // Auto-arrange: an optional one-shot tidy-up. It lays each independent
+  // tree out with a layered algorithm and stacks trees/labels vertically
+  // in creation order — then you're free to drag anything afterwards.
+  // ---------------------------------------------------------------
+  function unionFind(ids){
+    const parent = {}; ids.forEach(id => parent[id] = id);
+    function find(x){ while(parent[x] !== x){ parent[x] = parent[parent[x]]; x = parent[x]; } return x; }
+    function union(a, b){ const ra = find(a), rb = find(b); if(ra !== rb) parent[ra] = rb; }
+    return { find, union };
+  }
+
+  // Groups every graph node into a connected component (edges treated as
+  // undirected purely for grouping) so unrelated trees are arranged apart.
+  function computeComponents(){
+    const nodes = graphNodes();
+    const uf = unionFind(nodes.map(n => n.id));
+    state.edges.forEach(e => {
+      const a = state.nodes[e.from], b = state.nodes[e.to];
+      if(a && b && a.kind === "node" && b.kind === "node") uf.union(e.from, e.to);
+    });
+    const groups = {};
+    nodes.forEach(n => {
+      const root = uf.find(n.id);
+      if(!groups[root]) groups[root] = [];
+      groups[root].push(n.id);
+    });
+    return Object.values(groups);
+  }
+
+  // Computes suggested positions for one connected component, in local
+  // coordinates starting at (0,0). Used only by autoArrange().
+  function layoutComponent(nodeIds){
+    const nodeSet = new Set(nodeIds);
+    const dims = {};
+    nodeIds.forEach(id => dims[id] = measureNode(state.nodes[id]));
+
+    const parentsOf = {}, childrenOf = {};
+    nodeIds.forEach(id => { parentsOf[id] = []; childrenOf[id] = []; });
+    state.edges.forEach(e => {
+      if(nodeSet.has(e.from) && nodeSet.has(e.to)){
+        parentsOf[e.to].push(e.from);
+        childrenOf[e.from].push(e.to);
+      }
+    });
+
+    const layerOf = {};
+    const visiting = new Set();
+    function getLayer(id){
+      if(layerOf[id] !== undefined) return layerOf[id];
+      if(visiting.has(id)) return 0;
+      visiting.add(id);
+      const ps = parentsOf[id] || [];
+      let l = 0;
+      if(ps.length) l = Math.max(...ps.map(getLayer)) + 1;
+      visiting.delete(id);
+      layerOf[id] = l;
+      return l;
+    }
+    nodeIds.forEach(id => getLayer(id));
+
+    const maxLayer = nodeIds.length ? Math.max(...nodeIds.map(id => layerOf[id])) : -1;
+    const layers = [];
+    for(let i = 0; i <= maxLayer; i++) layers.push(nodeIds.filter(id => layerOf[id] === i));
+
+    const posInLayer = {};
+    layers.forEach(l => l.forEach((id, i) => posInLayer[id] = i));
+
+    function barycenter(id, neighbors){
+      const list = neighbors[id] || [];
+      if(!list.length) return posInLayer[id];
+      let sum = 0, count = 0;
+      list.forEach(nid => { if(posInLayer[nid] !== undefined){ sum += posInLayer[nid]; count++; } });
+      return count ? sum / count : posInLayer[id];
+    }
+
+    for(let iter = 0; iter < 4; iter++){
+      for(let i = 1; i <= maxLayer; i++){
+        layers[i].sort((a, b) => barycenter(a, parentsOf) - barycenter(b, parentsOf));
+        layers[i].forEach((id, idx) => posInLayer[id] = idx);
+      }
+      for(let i = maxLayer - 1; i >= 0; i--){
+        layers[i].sort((a, b) => barycenter(a, childrenOf) - barycenter(b, childrenOf));
+        layers[i].forEach((id, idx) => posInLayer[id] = idx);
+      }
+    }
+
+    const xOf = {};
+    layers.forEach(layerIds => {
+      let curX = 0;
+      layerIds.forEach(id => { xOf[id] = curX; curX += dims[id].width + H_GAP; });
+    });
+
+    function centerX(id){ return xOf[id] + dims[id].width / 2; }
+
+    function resolveOverlaps(layerIds, desired){
+      let prevRight = null;
+      layerIds.forEach(id => {
+        let x = desired[id] !== undefined ? desired[id] : xOf[id];
+        if(prevRight !== null && x < prevRight + H_GAP) x = prevRight + H_GAP;
+        xOf[id] = x;
+        prevRight = x + dims[id].width;
+      });
+    }
+
+    for(let iter = 0; iter < 6; iter++){
+      for(let i = 1; i <= maxLayer; i++){
+        const desired = {};
+        layers[i].forEach(id => {
+          const ps = parentsOf[id] || [];
+          if(ps.length){
+            const avg = ps.reduce((s, p) => s + centerX(p), 0) / ps.length;
+            desired[id] = avg - dims[id].width / 2;
+          }
+        });
+        resolveOverlaps(layers[i], desired);
+      }
+      for(let i = maxLayer - 1; i >= 0; i--){
+        const desired = {};
+        layers[i].forEach(id => {
+          const cs = childrenOf[id] || [];
+          if(cs.length){
+            const avg = cs.reduce((s, c) => s + centerX(c), 0) / cs.length;
+            desired[id] = avg - dims[id].width / 2;
+          }
+        });
+        resolveOverlaps(layers[i], desired);
+      }
+    }
+
+    const rowHeight = layers.map(layerIds => Math.max(0, ...layerIds.map(id => dims[id].height)));
+    const rowTop = [];
+    let curY = 0;
+    for(let i = 0; i <= maxLayer; i++){ rowTop.push(curY); curY += rowHeight[i] + V_GAP; }
+
+    const positioned = {};
+    nodeIds.forEach(id => {
+      const d = dims[id];
+      positioned[id] = { x: xOf[id], y: rowTop[layerOf[id]], width: d.width, height: d.height };
+    });
+
+    let minX = 0, maxX = 400;
+    if(nodeIds.length){
+      minX = Math.min(...nodeIds.map(id => positioned[id].x));
+      maxX = Math.max(...nodeIds.map(id => positioned[id].x + positioned[id].width));
+    }
+    nodeIds.forEach(id => positioned[id].x -= minX);
+    const width = Math.max(maxX - minX, 260);
+    const height = nodeIds.length ? Math.max(...nodeIds.map(id => positioned[id].y + positioned[id].height)) : 60;
+
+    return { positioned, width, height };
+  }
+
+  function autoArrange(){
+    const seqOf = n => (typeof n.seq === "number" ? n.seq : 0);
+    const components = computeComponents();
+    const headers = headerNodes();
+
+    const blocks = [];
+    headers.forEach(h => {
+      const hd = measureHeader(h);
+      blocks.push({ kind: "header", seq: seqOf(h), header: h, height: hd.height });
+    });
+    components.forEach(nodeIds => {
+      const layout = layoutComponent(nodeIds);
+      const seq = Math.min(...nodeIds.map(id => seqOf(state.nodes[id])));
+      blocks.push({ kind: "component", seq, nodeIds, layout });
+    });
+    blocks.sort((a, b) => a.seq - b.seq);
+
+    const overallWidth = Math.max(260, ...blocks.map(b => b.kind === "header" ? measureHeader(b.header).width : b.layout.width));
+
+    let curY = 0;
+    blocks.forEach((b, idx) => {
+      if(idx > 0) curY += BLOCK_GAP;
+      if(b.kind === "header"){
+        state.nodes[b.header.id].x = 0;
+        state.nodes[b.header.id].y = snap(curY);
+        curY += b.height;
+      } else {
+        const dx = (overallWidth - b.layout.width) / 2;
+        b.nodeIds.forEach(id => {
+          const p = b.layout.positioned[id];
+          state.nodes[id].x = snap(p.x + dx);
+          state.nodes[id].y = snap(p.y + curY);
+        });
+        curY += b.layout.height;
+      }
+    });
+
+    scheduleSave();
+    renderAll();
+    fitToView();
+  }
+
+  // ---------------------------------------------------------------
+  // Edge routing for freely-positioned nodes: a simple orthogonal
+  // elbow connector. Each end can either auto-pick which side of the
+  // node it leaves/enters from (based on relative position), or be
+  // pinned to a specific side via edge.fromSide / edge.toSide.
+  //
+  // The direct elbow is used whenever it's clear; if it would cut
+  // through another node, a local grid search (A*) finds a detour
+  // that hugs clear corridors between nodes instead.
+  // ---------------------------------------------------------------
+  const SIDES = ["top", "right", "bottom", "left"];
+  const ROUTE_MARGIN = 10;   // clearance kept between a routed line and any node it isn't touching
+  const ROUTE_STUB = 24;     // distance a line travels straight out of its anchor before it's free to turn
+  const ROUTE_GRID_MAX = 80; // cap on the local search grid's width/height, for worst-case performance
+
+  function sideAnchor(box, side, offsetPx){
+    offsetPx = offsetPx || 0;
+    switch(side){
+      case "top": return { x: box.x + box.width / 2 + offsetPx, y: box.y };
+      case "bottom": return { x: box.x + box.width / 2 + offsetPx, y: box.y + box.height };
+      case "left": return { x: box.x, y: box.y + box.height / 2 + offsetPx };
+      case "right": return { x: box.x + box.width, y: box.y + box.height / 2 + offsetPx };
+    }
+  }
+
+  // Picks which side of `box` faces `towardBox`. Biased toward a
+  // top-to-bottom flow: vertical (top/bottom) wins by default, and
+  // left/right is only used once the nodes are clearly side-by-side
+  // (their horizontal gap clearly dwarfs the vertical one) rather than
+  // whenever the horizontal gap is merely the larger of the two.
+  const VERTICAL_BIAS = 1.8;
+  function autoSide(box, towardBox){
+    const bcx = box.x + box.width / 2, bcy = box.y + box.height / 2;
+    const tcx = towardBox.x + towardBox.width / 2, tcy = towardBox.y + towardBox.height / 2;
+    const dx = tcx - bcx, dy = tcy - bcy;
+    if(Math.abs(dx) > Math.abs(dy) * VERTICAL_BIAS) return dx >= 0 ? "right" : "left";
+    return dy >= 0 ? "bottom" : "top";
+  }
+
+  function isVertSide(side){ return side === "top" || side === "bottom"; }
+  function sideDir(side){
+    switch(side){
+      case "top": return { dx: 0, dy: -1 };
+      case "bottom": return { dx: 0, dy: 1 };
+      case "left": return { dx: -1, dy: 0 };
+      case "right": return { dx: 1, dy: 0 };
+    }
+  }
+
+  // Builds the point list for a direct orthogonal (right-angle) elbow
+  // between two anchors, given the side each point exits/enters from.
+  function elbowPoints(p1, side1, p2, side2, bendOverride){
+    const v1 = isVertSide(side1), v2 = isVertSide(side2);
+    if(v1 && v2){
+      if(Math.abs(p1.x - p2.x) < 0.5) return [p1, p2];
+      const midY = (bendOverride && typeof bendOverride.mid === "number") ? bendOverride.mid : p1.y + (p2.y - p1.y) / 2;
+      return [p1, { x: p1.x, y: midY }, { x: p2.x, y: midY }, p2];
+    }
+    if(!v1 && !v2){
+      if(Math.abs(p1.y - p2.y) < 0.5) return [p1, p2];
+      const midX = (bendOverride && typeof bendOverride.mid === "number") ? bendOverride.mid : p1.x + (p2.x - p1.x) / 2;
+      return [p1, { x: midX, y: p1.y }, { x: midX, y: p2.y }, p2];
+    }
+    // Mixed axis (one end pinned to a vertical side, the other to a
+    // horizontal side): a single right-angle bend.
+    if(v1) return [p1, { x: p1.x, y: p2.y }, p2];
+    return [p1, { x: p2.x, y: p1.y }, p2];
+  }
+
+  function rectsOverlap(ax, ay, aw, ah, bx, by, bw, bh){
+    return !(ax + aw <= bx || bx + bw <= ax || ay + ah <= by || by + bh <= ay);
+  }
+
+  function segmentHitsObstacle(x1, y1, x2, y2, obstacles){
+    const minX = Math.min(x1, x2), maxX = Math.max(x1, x2);
+    const minY = Math.min(y1, y2), maxY = Math.max(y1, y2);
+    return obstacles.some(o => rectsOverlap(minX, minY, Math.max(maxX - minX, 0.01), Math.max(maxY - minY, 0.01), o.x, o.y, o.width, o.height));
+  }
+
+  function pathCollides(pts, obstacles){
+    for(let i = 0; i < pts.length - 1; i++){
+      if(segmentHitsObstacle(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y, obstacles)) return true;
+    }
+    return false;
+  }
+
+  // Drops points that just continue in the same direction as the
+  // previous segment, so exported paths have only real corners.
+  function segDir(a, b){
+    if(Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5) return "none";
+    if(Math.abs(a.x - b.x) < 0.5) return b.y > a.y ? "down" : "up";
+    if(Math.abs(a.y - b.y) < 0.5) return b.x > a.x ? "right" : "left";
+    return "diag";
+  }
+  function simplifyPoints(pts){
+    if(pts.length <= 2) return pts.slice();
+    const out = [pts[0]];
+    for(let i = 1; i < pts.length - 1; i++){
+      const prev = out[out.length - 1], cur = pts[i], next = pts[i + 1];
+      const d1 = segDir(prev, cur), d2 = segDir(cur, next);
+      if(d1 === "none" || d1 === d2) continue;
+      out.push(cur);
+    }
+    const last = pts[pts.length - 1];
+    const tail = out[out.length - 1];
+    if(Math.abs(tail.x - last.x) >= 0.5 || Math.abs(tail.y - last.y) >= 0.5) out.push(last);
+    return out;
+  }
+  function pointsToPath(pts){
+    const cleaned = simplifyPoints(pts);
+    if(!cleaned.length) return "";
+    return cleaned.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x},${p.y}`).join(" ");
+  }
+
+  // Minimal binary heap, used by the local A* obstacle-avoidance search.
+  function makeMinHeap(){
+    const a = [];
+    return {
+      size(){ return a.length; },
+      push(item){
+        a.push(item);
+        let i = a.length - 1;
+        while(i > 0){
+          const p = (i - 1) >> 1;
+          if(a[p].f <= a[i].f) break;
+          [a[p], a[i]] = [a[i], a[p]];
+          i = p;
+        }
+      },
+      pop(){
+        const top = a[0], last = a.pop();
+        if(a.length){
+          a[0] = last;
+          let i = 0;
+          while(true){
+            const l = 2 * i + 1, r = 2 * i + 2;
+            let smallest = i;
+            if(l < a.length && a[l].f < a[smallest].f) smallest = l;
+            if(r < a.length && a[r].f < a[smallest].f) smallest = r;
+            if(smallest === i) break;
+            [a[smallest], a[i]] = [a[i], a[smallest]];
+            i = smallest;
+          }
+        }
+        return top;
+      }
+    };
+  }
+
+  // Searches a local grid for an orthogonal path from `start` to `goal`
+  // (both already stepped clear of their own nodes) that avoids every
+  // rect in `obstacles`. Prefers short paths with few turns.
+  function astarOrthogonal(minX, minY, cols, rows, step, obstacles, start, goal){
+    const DIRS = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+    const blocked = new Map();
+    function isBlocked(cx, cy){
+      const k = cx + "_" + cy;
+      if(blocked.has(k)) return blocked.get(k);
+      const x = minX + cx * step, y = minY + cy * step;
+      const hit = obstacles.some(o => x >= o.x && x <= o.x + o.width && y >= o.y && y <= o.y + o.height);
+      blocked.set(k, hit);
+      return hit;
+    }
+    const h = (cx, cy) => Math.abs(cx - goal.cx) + Math.abs(cy - goal.cy);
+    const gScore = new Map();
+    const cameFrom = new Map();
+    const heap = makeMinHeap();
+    const key = (cx, cy, d) => cx + "," + cy + "," + d;
+    gScore.set(key(start.cx, start.cy, -1), 0);
+    heap.push({ f: h(start.cx, start.cy), cx: start.cx, cy: start.cy, dir: -1 });
+    // Kept low relative to the per-cell cost of 1 so total path length
+    // dominates the search — a long, mostly-straight wrap-around around
+    // several nodes should not out-score a shorter path that has to
+    // thread a couple more turns through a gap between them.
+    const TURN_PENALTY = 1.25;
+    let iterations = 0, foundKey = null;
+    while(heap.size() && iterations < 9000){
+      iterations++;
+      const cur = heap.pop();
+      const curKey = key(cur.cx, cur.cy, cur.dir);
+      const bestG = gScore.get(curKey);
+      if(bestG === undefined || cur.f - h(cur.cx, cur.cy) > bestG + 1e-6) continue;
+      if(cur.cx === goal.cx && cur.cy === goal.cy){ foundKey = curKey; break; }
+      for(let d = 0; d < 4; d++){
+        const nx = cur.cx + DIRS[d][0], ny = cur.cy + DIRS[d][1];
+        if(nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+        if(isBlocked(nx, ny)) continue;
+        let cost = bestG + 1;
+        if(cur.dir !== -1 && cur.dir !== d) cost += TURN_PENALTY;
+        const nKey = key(nx, ny, d);
+        if(gScore.get(nKey) === undefined || cost < gScore.get(nKey)){
+          gScore.set(nKey, cost);
+          cameFrom.set(nKey, curKey);
+          heap.push({ f: cost + h(nx, ny), cx: nx, cy: ny, dir: d });
+        }
+      }
+    }
+    if(!foundKey) return null;
+    const cells = [];
+    let k = foundKey;
+    while(k !== undefined){
+      const [cx, cy] = k.split(",").map(Number);
+      cells.push({ cx, cy });
+      k = cameFrom.get(k);
+    }
+    cells.reverse();
+    return cells.map(c => ({ x: minX + c.cx * step, y: minY + c.cy * step }));
+  }
+
+  // Attempts an obstacle-avoiding detour between two anchor points.
+  // Steps straight out of each anchor first (so the search starts
+  // clear of the node itself), then free-routes through a local grid.
+  function smartRoute(p1, side1, p2, side2, obstacles){
+    const d1 = sideDir(side1), d2 = sideDir(side2);
+    const stub1 = { x: p1.x + d1.dx * ROUTE_STUB, y: p1.y + d1.dy * ROUTE_STUB };
+    const stub2 = { x: p2.x + d2.dx * ROUTE_STUB, y: p2.y + d2.dy * ROUTE_STUB };
+
+    const step = GRID_SIZE;
+    const pad = 120;
+    let minX = Math.min(stub1.x, stub2.x) - pad, maxX = Math.max(stub1.x, stub2.x) + pad;
+    let minY = Math.min(stub1.y, stub2.y) - pad, maxY = Math.max(stub1.y, stub2.y) + pad;
+    let cols = Math.max(3, Math.round((maxX - minX) / step) + 1);
+    let rows = Math.max(3, Math.round((maxY - minY) / step) + 1);
+    if(cols > ROUTE_GRID_MAX){ maxX = minX + ROUTE_GRID_MAX * step; cols = ROUTE_GRID_MAX; }
+    if(rows > ROUTE_GRID_MAX){ maxY = minY + ROUTE_GRID_MAX * step; rows = ROUTE_GRID_MAX; }
+
+    const snap = pt => ({
+      cx: Math.min(cols - 1, Math.max(0, Math.round((pt.x - minX) / step))),
+      cy: Math.min(rows - 1, Math.max(0, Math.round((pt.y - minY) / step))),
+    });
+    const startCell = snap(stub1), goalCell = snap(stub2);
+    const detour = astarOrthogonal(minX, minY, cols, rows, step, obstacles, startCell, goalCell);
+    if(!detour) return null;
+    return [p1, stub1, ...detour, stub2, p2];
+  }
+
+  // When several edges leave or arrive on the same side of the same node,
+  // anchoring them all to that side's dead-center point makes them overlap
+  // for their whole run — that's what reads as one thick tangled line where
+  // several branches actually converge or diverge. This spreads each edge's
+  // anchor out along the side it uses (ordered by where its other end sits,
+  // so the bundle doesn't cross itself), producing a small fan instead of a
+  // single point. Purely cosmetic — doesn't touch stored edge data.
+  const SLOT_GAP = 16; // px between adjacent anchors in a bundle
+
+  function computeSideSlots(edgeList, boxMap){
+    const resolved = {};   // edgeId -> { fromSide, toSide }
+    const groups = {};     // "nodeId:side" -> [{ edgeId, other, role }]
+
+    edgeList.forEach(e => {
+      const s = boxMap[e.from], t = boxMap[e.to];
+      if(!s || !t) return;
+      const fromSide = e.fromSide || autoSide(s, t);
+      const toSide = e.toSide || autoSide(t, s);
+      resolved[e.id] = { fromSide, toSide };
+      const fromKey = e.from + ":" + fromSide;
+      (groups[fromKey] = groups[fromKey] || []).push({ edgeId: e.id, other: t, role: "from" });
+      const toKey = e.to + ":" + toSide;
+      (groups[toKey] = groups[toKey] || []).push({ edgeId: e.id, other: s, role: "to" });
+    });
+
+    const offsets = {}; // edgeId -> { fromOffset, toOffset } in px
+    Object.keys(groups).forEach(key => {
+      const list = groups[key];
+      if(list.length < 2) return; // nothing shares this side, no offset needed
+      const nodeId = key.slice(0, key.lastIndexOf(":"));
+      const side = key.slice(key.lastIndexOf(":") + 1);
+      const box = boxMap[nodeId];
+      if(!box) return;
+      const vert = isVertSide(side); // top/bottom sides spread horizontally, left/right spread vertically
+      const sortVal = it => vert ? (it.other.x + it.other.width / 2) : (it.other.y + it.other.height / 2);
+      list.sort((a, b) => sortVal(a) - sortVal(b));
+      const n = list.length;
+      const dimension = vert ? box.width : box.height;
+      const maxSpread = Math.max(0, Math.min(dimension * 0.7, (n - 1) * SLOT_GAP));
+      list.forEach((item, i) => {
+        const frac = n > 1 ? (i / (n - 1) - 0.5) : 0;
+        const offsetPx = frac * maxSpread;
+        offsets[item.edgeId] = offsets[item.edgeId] || {};
+        offsets[item.edgeId][item.role + "Offset"] = offsetPx;
+      });
+    });
+
+    // Shared bend coordinate for groups of edges that converge on (or fan
+    // out from) the same node+side while their far end is on the same
+    // orientation of side (both vertical or both horizontal) — exactly the
+    // elbowPoints cases that otherwise compute their bend independently
+    // from just that one edge's own endpoints. Most such groups are fine
+    // left alone: each edge's own natural bend already lines up with its
+    // neighbors in the same front-to-back order as their fan-out slots
+    // (computed above), so intervening would only make already-distinct
+    // paths run on top of each other for no reason. Only step in for the
+    // subset where that order is actually inverted — the case that
+    // produces a real crossing — and even then, stagger the shared band
+    // rather than collapsing it to one line, so siblings still read as
+    // separate parallel paths instead of a single merged trunk.
+    const bends = {};
+    Object.keys(groups).forEach(key => {
+      const list = groups[key];
+      if(list.length < 2) return;
+      const nodeId = key.slice(0, key.lastIndexOf(":"));
+      const side = key.slice(key.lastIndexOf(":") + 1);
+      const box = boxMap[nodeId];
+      if(!box) return;
+      const vert = isVertSide(side);
+
+      const members = list.map(item => {
+        const otherSide = item.role === "from" ? resolved[item.edgeId].toSide : resolved[item.edgeId].fromSide;
+        if(isVertSide(otherSide) !== vert) return null; // mixed-axis edges bend independently; leave them alone
+        const off = offsets[item.edgeId] || {};
+        const anchorOffset = item.role === "from" ? off.fromOffset : off.toOffset;
+        const otherOffset = item.role === "from" ? off.toOffset : off.fromOffset;
+        return {
+          edgeId: item.edgeId,
+          anchor: sideAnchor(box, side, anchorOffset),
+          other: sideAnchor(item.other, otherSide, otherOffset),
+        };
+      }).filter(Boolean);
+      if(members.length < 2) return;
+
+      // `members` is already in the same front-to-back order used for the
+      // fan-out offsets above. Each edge's natural (independent) bend
+      // point is symmetric regardless of which end is source vs target,
+      // so a simple midpoint is enough to check whether that order holds.
+      const natural = members.map(m => vert ? (m.anchor.y + m.other.y) / 2 : (m.anchor.x + m.other.x) / 2);
+      let inverted = false;
+      for(let i = 1; i < natural.length; i++){
+        if(natural[i] < natural[i - 1] - 0.5){ inverted = true; break; }
+      }
+      if(!inverted) return; // natural bends already agree with the fan order — nothing to fix here
+
+      const margin = 20, stagger = 10, n = members.length;
+      const spread = Math.min(stagger * (n - 1), 40);
+      if(vert){
+        const anchorY = members[0].anchor.y; // identical for every member: same node + same side
+        const avgOtherY = members.reduce((sum, m) => sum + m.other.y, 0) / n;
+        let base;
+        if(avgOtherY <= anchorY){
+          const lowest = Math.max(...members.map(m => m.other.y));
+          base = Math.max(Math.min(lowest + margin, anchorY - 8 - spread), lowest + 4);
+        } else {
+          const highest = Math.min(...members.map(m => m.other.y));
+          base = Math.min(Math.max(highest - margin, anchorY + 8 + spread), highest - 4 - spread);
+        }
+        members.forEach((m, i) => { bends[m.edgeId] = { mid: base + (n > 1 ? (i / (n - 1)) * spread : 0) }; });
+      } else {
+        const anchorX = members[0].anchor.x;
+        const avgOtherX = members.reduce((sum, m) => sum + m.other.x, 0) / n;
+        let base;
+        if(avgOtherX <= anchorX){
+          const rightmost = Math.max(...members.map(m => m.other.x));
+          base = Math.max(Math.min(rightmost + margin, anchorX - 8 - spread), rightmost + 4);
+        } else {
+          const leftmost = Math.min(...members.map(m => m.other.x));
+          base = Math.min(Math.max(leftmost - margin, anchorX + 8 + spread), leftmost - 4 - spread);
+        }
+        members.forEach((m, i) => { bends[m.edgeId] = { mid: base + (n > 1 ? (i / (n - 1)) * spread : 0) }; });
+      }
+    });
+
+    return { resolved, offsets, bends };
+  }
+
+  function routeEdge(s, t, edge, allBoxes, sideInfo){
+    const info = sideInfo && edge && sideInfo.resolved[edge.id];
+    const fromSide = info ? info.fromSide : ((edge && edge.fromSide) || autoSide(s, t));
+    const toSide = info ? info.toSide : ((edge && edge.toSide) || autoSide(t, s));
+    const off = (sideInfo && edge && sideInfo.offsets[edge.id]) || {};
+    const p1 = sideAnchor(s, fromSide, off.fromOffset);
+    const p2 = sideAnchor(t, toSide, off.toOffset);
+    const bendOverride = (sideInfo && edge && sideInfo.bends[edge.id]) || null;
+    const directPts = elbowPoints(p1, fromSide, p2, toSide, bendOverride);
+
+    const obstacles = (allBoxes || [])
+      .filter(b => b.id !== s.id && b.id !== t.id)
+      .map(b => ({ x: b.x - ROUTE_MARGIN, y: b.y - ROUTE_MARGIN, width: b.width + ROUTE_MARGIN * 2, height: b.height + ROUTE_MARGIN * 2 }));
+
+    if(!obstacles.length || !pathCollides(directPts, obstacles)){
+      return pointsToPath(directPts);
+    }
+    const detourPts = smartRoute(p1, fromSide, p2, toSide, obstacles);
+    return pointsToPath(detourPts || directPts);
+  }
+
+  // Reads positions straight from state (no auto-layout) and builds
+  // everything render() needs, including a bounding box for fit/export.
+  function getRenderModel(){
+    const nodesPositioned = {};
+    graphNodes().forEach(n => {
+      const d = measureNode(n);
+      nodesPositioned[n.id] = { ...n, x: n.x || 0, y: n.y || 0, width: d.width, height: d.height,
+        titleLines: d.titleLines, bodyLines: d.bodyLines, varLines: d.varLines };
+    });
+    const headersPositioned = headerNodes().map(h => {
+      const d = measureHeader(h);
+      return { ...h, x: h.x || 0, y: h.y || 0, width: d.width, height: d.height };
+    });
+    const allBoxes = [...Object.values(nodesPositioned), ...headersPositioned];
+    const boxMap = {};
+    allBoxes.forEach(b => boxMap[b.id] = b);
+    const sideInfo = computeSideSlots(state.edges, boxMap);
+    const edgeGroups = state.edges
+      .filter(e => nodesPositioned[e.from] && nodesPositioned[e.to])
+      .map(e => ({ id: e.id, d: routeEdge(nodesPositioned[e.from], nodesPositioned[e.to], e, allBoxes, sideInfo) }));
+
+    let minX = 0, minY = 0, maxX = 400, maxY = 300;
+    if(allBoxes.length){
+      minX = Math.min(...allBoxes.map(b => b.x));
+      minY = Math.min(...allBoxes.map(b => b.y));
+      maxX = Math.max(...allBoxes.map(b => b.x + b.width));
+      maxY = Math.max(...allBoxes.map(b => b.y + b.height));
+    }
+
+    return { nodes: nodesPositioned, headers: headersPositioned, edgeGroups, bounds: { minX, minY, maxX, maxY } };
+  }
+
+  // ---------------------------------------------------------------
+  // Rendering
+  // ---------------------------------------------------------------
+  const svg = document.getElementById("stage");
+  const viewport = document.getElementById("viewport");
+  const NS = "http://www.w3.org/2000/svg";
+
+  function el(tag, attrs, parent){
+    const e = document.createElementNS(NS, tag);
+    for(const k in attrs) e.setAttribute(k, attrs[k]);
+    if(parent) parent.appendChild(e);
+    return e;
+  }
+
+  let lastLayout = null;
+  let dragState = null;
+
+  function worldPointFromEvent(ev){
+    const rect = canvasWrap.getBoundingClientRect();
+    const sx = ev.clientX - rect.left, sy = ev.clientY - rect.top;
+    return { x: (sx - view.x) / view.scale, y: (sy - view.y) / view.scale };
+  }
+
+  function startDrag(ev, id){
+    if(ev.pointerType === "mouse" && ev.button !== 0) return;
+    if(connectMode) return;
+    if(ev.target.closest(".node-affordance")) return;
+    ev.stopPropagation();
+    const obj = state.nodes[id];
+    const wp = worldPointFromEvent(ev);
+    dragState = { id, pointerId: ev.pointerId, offsetX: wp.x - (obj.x || 0), offsetY: wp.y - (obj.y || 0), moved: false, baseX: obj.x || 0, baseY: obj.y || 0 };
+    try{ ev.currentTarget.setPointerCapture(ev.pointerId); }catch(err){ /* capture is a nice-to-have, not required */ }
+  }
+
+  // Live-drag updates avoid the expensive full render() (which tears
+  // down and rebuilds every SVG element). Rebuilding mid-gesture would
+  // destroy the very element the finger/pointer is touching, which
+  // breaks touch tracking on mobile after a single move. Instead we
+  // just translate the dragged node's existing group and patch the
+  // paths of edges attached to it, then do one full render() at the
+  // end of the drag to lock in correct positions and edge routing.
+  function liveBoxes(){
+    if(!lastLayout) return [];
+    const boxes = [];
+    Object.values(lastLayout.nodes).forEach(n => {
+      const live = state.nodes[n.id];
+      boxes.push({ id: n.id, x: live ? (live.x || 0) : n.x, y: live ? (live.y || 0) : n.y, width: n.width, height: n.height });
+    });
+    lastLayout.headers.forEach(h => {
+      const live = state.nodes[h.id];
+      boxes.push({ id: h.id, x: live ? (live.x || 0) : h.x, y: live ? (live.y || 0) : h.y, width: h.width, height: h.height });
+    });
+    return boxes;
+  }
+
+  function updateConnectedEdgePaths(id){
+    const boxes = liveBoxes();
+    const boxMap = {};
+    boxes.forEach(b => boxMap[b.id] = b);
+    const sideInfo = computeSideSlots(state.edges, boxMap);
+    state.edges.forEach(e => {
+      if(e.from !== id && e.to !== id) return;
+      const s = boxMap[e.from], t = boxMap[e.to];
+      if(!s || !t) return;
+      const d = routeEdge(s, t, e, boxes, sideInfo);
+      const hitEl = viewport.querySelector(`.edge-hit[data-edge="${e.id}"]`);
+      if(hitEl){
+        hitEl.setAttribute("d", d);
+        if(hitEl.nextElementSibling) hitEl.nextElementSibling.setAttribute("d", d);
+      }
+    });
+  }
+
+  function updateNodeDragPosition(id){
+    if(!dragState) return;
+    const obj = state.nodes[id];
+    if(!obj) return;
+    const dx = (obj.x || 0) - dragState.baseX, dy = (obj.y || 0) - dragState.baseY;
+    const groupEl = viewport.querySelector(`.node-card[data-id="${id}"]`);
+    if(groupEl) groupEl.setAttribute("transform", `translate(${dx},${dy})`);
+    updateConnectedEdgePaths(id);
+  }
+
+  // Hover (mouse only) previews which node/edge a pointer is over; selection
+  // persists the same highlight once something is clicked. Whichever is
+  // active determines what fades — see applyHighlight().
+  function setHovered(type, id){
+    hovered = type ? { type, id } : null;
+    applyHighlight();
+  }
+
+  function relatedIdsFor(active){
+    const nodeIds = new Set();
+    const edgeIds = new Set();
+    if(active.type === "node"){
+      nodeIds.add(active.id);
+      state.edges.forEach(e => {
+        if(e.from === active.id || e.to === active.id){
+          edgeIds.add(e.id);
+          nodeIds.add(e.from);
+          nodeIds.add(e.to);
+        }
+      });
+    } else if(active.type === "edge"){
+      const e = state.edges.find(x => x.id === active.id);
+      if(e){ edgeIds.add(e.id); nodeIds.add(e.from); nodeIds.add(e.to); }
+    }
+    return { nodeIds, edgeIds };
+  }
+
+  // Fades every node/edge not connected to the hovered-or-selected item, so
+  // it's obvious which cards a tangled line actually joins. Toggles classes
+  // on the already-built SVG rather than re-rendering, so it stays cheap.
+  function applyHighlight(){
+    const active = hovered || (selection.type ? selection : null);
+    if(!active || !active.type){
+      viewport.classList.remove("has-focus");
+      viewport.querySelectorAll(".related, .unrelated").forEach(elx => elx.classList.remove("related", "unrelated"));
+      return;
+    }
+    const { nodeIds, edgeIds } = relatedIdsFor(active);
+    viewport.classList.add("has-focus");
+    viewport.querySelectorAll(".node-card").forEach(elx => {
+      const rel = nodeIds.has(elx.getAttribute("data-id"));
+      elx.classList.toggle("related", rel);
+      elx.classList.toggle("unrelated", !rel);
+    });
+    viewport.querySelectorAll(".edge-path").forEach(elx => {
+      const rel = edgeIds.has(elx.getAttribute("data-edge"));
+      elx.classList.toggle("related", rel);
+      elx.classList.toggle("unrelated", !rel);
+    });
+  }
+
+  function render(){
+    lastLayout = getRenderModel();
+    viewport.innerHTML = "";
+
+    // edges first (behind nodes)
+    lastLayout.edgeGroups.forEach(g => {
+      const hit = el("path", { d: g.d, class: "edge-hit", "data-edge": g.id }, viewport);
+      const isSel = selection.type === "edge" && selection.id === g.id;
+      el("path", { d: g.d, class: "edge-path" + (isSel ? " selected" : ""), "marker-end": "url(#arrowhead)", "data-edge": g.id }, viewport);
+      hit.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        selection = { type: "edge", id: g.id };
+        renderAll();
+      });
+      hit.addEventListener("pointerenter", (ev) => { if(ev.pointerType === "mouse" && !dragState) setHovered("edge", g.id); });
+      hit.addEventListener("pointerleave", (ev) => { if(ev.pointerType === "mouse") setHovered(null); });
+    });
+
+    // headers
+    lastLayout.headers.forEach(h => {
+      const isSel = selection.type === "node" && selection.id === h.id;
+      const g = el("g", { class: "node-card", "data-id": h.id }, viewport);
+      el("rect", { x: h.x, y: h.y, width: h.width, height: h.height, rx: 5, class: "header-rect" + (isSel ? " selected" : "") }, g);
+      el("text", { x: h.x + h.width / 2, y: h.y + h.height / 2 + 4.5, "text-anchor": "middle", class: "header-text", "font-size": 13.5 }, g).textContent = h.title || "Untitled";
+      g.addEventListener("pointerdown", (ev) => startDrag(ev, h.id));
+      g.addEventListener("click", (ev) => { ev.stopPropagation(); onNodeClick(h.id); });
+      g.addEventListener("pointerenter", (ev) => { if(ev.pointerType === "mouse" && !dragState) setHovered("node", h.id); });
+      g.addEventListener("pointerleave", (ev) => { if(ev.pointerType === "mouse") setHovered(null); });
+    });
+
+    // graph nodes
+    Object.values(lastLayout.nodes).forEach(n => {
+      const isSel = selection.type === "node" && selection.id === n.id;
+      const isConnSrc = connectMode && connectSource === n.id;
+      const g = el("g", { class: "node-card" + (isSel ? " selected" : "") + (isConnSrc ? " connect-src" : ""), "data-id": n.id }, viewport);
+      el("rect", { x: n.x, y: n.y, width: n.width, height: n.height, rx: 7, class: "node-rect" }, g);
+      const spineColor = n.tag === "choice" ? "var(--tag-choice)" : n.tag === "note" ? "var(--tag-note)" : "var(--tag-scene)";
+      el("rect", { x: n.x, y: n.y + 2, width: SPINE_W, height: n.height - 4, rx: 2, class: "node-spine", fill: spineColor }, g);
+
+      let ty = n.y + PAD_Y + 12;
+      n.titleLines.forEach((line, i) => {
+        const cls = i === 0 ? "title-line" : "subtitle-line";
+        el("text", { x: n.x + PAD_X + SPINE_W, y: ty, class: cls, "font-size": 13 }, g).textContent = line;
+        ty += TITLE_LH;
+      });
+      if(n.bodyLines.length){
+        ty += GAP_AFTER_TITLE - 4;
+        n.bodyLines.forEach(line => {
+          el("text", { x: n.x + PAD_X + SPINE_W, y: ty, class: "body-line", "font-size": 12.5 }, g).textContent = line;
+          ty += BODY_LH;
+        });
+      }
+      if(n.varLines.length){
+        ty += GAP_AFTER_BODY - 5;
+        n.varLines.forEach(line => {
+          el("text", { x: n.x + PAD_X + SPINE_W, y: ty, class: "var-line", "font-size": 11.5 }, g).textContent = line;
+          ty += VAR_LH;
+        });
+      }
+
+      // affordances: delete (top-right), add-child (bottom-center)
+      const delG = el("g", { class: "node-affordance aff-del", transform: `translate(${n.x + n.width - 20}, ${n.y + 4})` }, g);
+      el("circle", { cx: 10, cy: 10, r: 10, class: "aff-bg" }, delG);
+      el("text", { x: 10, y: 14, class: "aff-sym", "font-size": 13 }, delG).textContent = "×";
+      delG.addEventListener("click", (ev) => { ev.stopPropagation(); if(confirm("Delete this node?")){ deleteNode(n.id); scheduleSave(); renderAll(); } });
+
+      const addG = el("g", { class: "node-affordance aff-add", transform: `translate(${n.x + n.width/2 - 10}, ${n.y + n.height - 4})` }, g);
+      el("circle", { cx: 10, cy: 10, r: 10, class: "aff-bg" }, addG);
+      el("text", { x: 10, y: 14, class: "aff-sym", "font-size": 13 }, addG).textContent = "+";
+      addG.addEventListener("click", (ev) => { ev.stopPropagation(); addChildTo(n.id); });
+
+      g.addEventListener("pointerdown", (ev) => startDrag(ev, n.id));
+      g.addEventListener("click", (ev) => { ev.stopPropagation(); onNodeClick(n.id); });
+      g.addEventListener("pointerenter", (ev) => { if(ev.pointerType === "mouse" && !dragState) setHovered("node", n.id); });
+      g.addEventListener("pointerleave", (ev) => { if(ev.pointerType === "mouse") setHovered(null); });
+    });
+
+    applyTransform();
+    applyHighlight();
+  }
+
+  function onNodeClick(id){
+    if(connectMode){
+      if(!connectSource){
+        connectSource = id;
+        document.getElementById("connect-banner-text").textContent = "Now click the node to connect it to";
+        renderAll();
+      } else if(connectSource === id){
+        connectSource = null;
+        document.getElementById("connect-banner-text").textContent = "Click a node to start a connection";
+        renderAll();
+      } else {
+        const ok = addEdgeSafe(connectSource, id);
+        connectSource = null;
+        document.getElementById("connect-banner-text").textContent = "Click a node to start a connection";
+        if(ok) scheduleSave();
+        renderAll();
+      }
+      return;
+    }
+    selection = { type: "node", id };
+    renderAll();
+  }
+
+  function addChildTo(parentId){
+    const id = uid("n");
+    const parent = state.nodes[parentId];
+    const spot = findSpotNearParent(parent, NODE_WIDTH, 60);
+    state.nodes[id] = { id, kind: "node", tag: "scene", title: "New scene", subtitle: "", body: "", vars: [], seq: takeSeq(), x: spot.x, y: spot.y };
+    state.edges.push({ id: uid("e"), from: parentId, to: id, fromSide: "bottom", toSide: "top" });
+    selection = { type: "node", id };
+    scheduleSave();
+    renderAll();
+    focusTitleField();
+  }
+
+  // ---------------------------------------------------------------
+  // Pan / zoom
+  // ---------------------------------------------------------------
+  const canvasWrap = document.getElementById("canvas-wrap");
+
+  function applyTransform(){
+    viewport.setAttribute("transform", `translate(${view.x},${view.y}) scale(${view.scale})`);
+  }
+
+  function fitToView(){
+    if(!lastLayout) return;
+    const b = lastLayout.bounds;
+    const contentW = Math.max(b.maxX - b.minX, 1);
+    const contentH = Math.max(b.maxY - b.minY, 1);
+    const wrapRect = canvasWrap.getBoundingClientRect();
+    const pad = 50;
+    const sx = (wrapRect.width - pad * 2) / contentW;
+    const sy = (wrapRect.height - pad * 2) / contentH;
+    let scale = Math.min(sx, sy, 1.15);
+    scale = Math.max(scale, 0.15);
+    view.scale = scale;
+    view.x = (wrapRect.width - contentW * scale) / 2 - b.minX * scale;
+    view.y = pad / 2 + 10 - b.minY * scale;
+    applyTransform();
+  }
+
+  canvasWrap.addEventListener("wheel", (ev) => {
+    ev.preventDefault();
+    const rect = canvasWrap.getBoundingClientRect();
+    const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
+    const worldX = (mx - view.x) / view.scale, worldY = (my - view.y) / view.scale;
+    const delta = -ev.deltaY * 0.0015;
+    let newScale = view.scale * (1 + delta);
+    newScale = Math.min(Math.max(newScale, 0.15), 3);
+    view.x = mx - worldX * newScale;
+    view.y = my - worldY * newScale;
+    view.scale = newScale;
+    applyTransform();
+  }, { passive: false });
+
+  // panPointers tracks every pointer (finger) currently pressed down on
+  // empty canvas (not on a node/edge) — one for panning, two for pinch-zoom.
+  const panPointers = new Map(); // pointerId -> { x: clientX, y: clientY }
+  let pinchStart = null; // { dist, scale, worldX, worldY }
+
+  function pinchGeometry(){
+    const pts = Array.from(panPointers.values());
+    const rect = canvasWrap.getBoundingClientRect();
+    const p0 = { x: pts[0].x - rect.left, y: pts[0].y - rect.top };
+    const p1 = { x: pts[1].x - rect.left, y: pts[1].y - rect.top };
+    return { dist: Math.hypot(p0.x - p1.x, p0.y - p1.y), midX: (p0.x + p1.x) / 2, midY: (p0.y + p1.y) / 2 };
+  }
+
+  canvasWrap.addEventListener("pointerdown", (ev) => {
+    if(ev.target.closest(".node-card") || ev.target.closest(".edge-hit")) return;
+    panPointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    if(panPointers.size === 1){
+      isPanning = true;
+      canvasWrap.classList.add("panning");
+      panStart = { x: ev.clientX, y: ev.clientY };
+      viewStart = { x: view.x, y: view.y };
+    } else if(panPointers.size === 2){
+      isPanning = false;
+      canvasWrap.classList.remove("panning");
+      const g = pinchGeometry();
+      pinchStart = {
+        dist: g.dist || 1,
+        scale: view.scale,
+        worldX: (g.midX - view.x) / view.scale,
+        worldY: (g.midY - view.y) / view.scale,
+      };
+    }
+  });
+
+  window.addEventListener("pointermove", (ev) => {
+    if(dragState && dragState.pointerId === ev.pointerId){
+      const wp = worldPointFromEvent(ev);
+      const nx = snap(wp.x - dragState.offsetX);
+      const ny = snap(wp.y - dragState.offsetY);
+      const obj = state.nodes[dragState.id];
+      if(obj && (obj.x !== nx || obj.y !== ny)){
+        obj.x = nx; obj.y = ny;
+        dragState.moved = true;
+        updateNodeDragPosition(dragState.id);
+      }
+      return;
+    }
+    if(!panPointers.has(ev.pointerId)) return;
+    panPointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    if(panPointers.size >= 2 && pinchStart){
+      const g = pinchGeometry();
+      let newScale = pinchStart.scale * (g.dist / pinchStart.dist);
+      newScale = Math.min(Math.max(newScale, 0.15), 3);
+      view.scale = newScale;
+      view.x = g.midX - pinchStart.worldX * newScale;
+      view.y = g.midY - pinchStart.worldY * newScale;
+      applyTransform();
+    } else if(isPanning && panPointers.size === 1){
+      view.x = viewStart.x + (ev.clientX - panStart.x);
+      view.y = viewStart.y + (ev.clientY - panStart.y);
+      applyTransform();
+    }
+  });
+
+  function endPointer(ev){
+    if(dragState && dragState.pointerId === ev.pointerId){
+      const wasMoved = dragState.moved;
+      dragState = null;
+      if(wasMoved){ scheduleSave(); render(); }
+    }
+    if(panPointers.has(ev.pointerId)){
+      panPointers.delete(ev.pointerId);
+      pinchStart = null;
+      if(panPointers.size === 0){
+        isPanning = false;
+        canvasWrap.classList.remove("panning");
+      } else if(panPointers.size === 1){
+        const [remaining] = Array.from(panPointers.values());
+        isPanning = true;
+        canvasWrap.classList.add("panning");
+        panStart = { x: remaining.x, y: remaining.y };
+        viewStart = { x: view.x, y: view.y };
+      }
+    }
+  }
+  window.addEventListener("pointerup", endPointer);
+  window.addEventListener("pointercancel", endPointer);
+
+  canvasWrap.addEventListener("click", (ev) => {
+    if(ev.target === canvasWrap || ev.target === svg){
+      selection = { type: null, id: null };
+      renderPanel();
+      viewport.querySelectorAll(".selected").forEach(elx => elx.classList.remove("selected"));
+      applyHighlight();
+    }
+  });
+
+  document.getElementById("btn-zoom-in").addEventListener("click", () => { view.scale = Math.min(view.scale * 1.2, 3); applyTransform(); });
+  document.getElementById("btn-zoom-out").addEventListener("click", () => { view.scale = Math.max(view.scale / 1.2, 0.15); applyTransform(); });
+  document.getElementById("btn-fit").addEventListener("click", fitToView);
+
+  // ---------------------------------------------------------------
+  // Side panel (editor)
+  // ---------------------------------------------------------------
+  const panelEl = document.getElementById("panel");
+  const editorContent = document.getElementById("editor-content");
+
+  function renderPanel(){
+    const node = selection.type === "node" ? state.nodes[selection.id] : null;
+    const edge = selection.type === "edge" ? state.edges.find(e => e.id === selection.id) : null;
+
+    if(!node && !edge){
+      panelEl.classList.add("hidden");
+      editorContent.style.display = "none";
+      return;
+    }
+    panelEl.classList.remove("hidden");
+    editorContent.style.display = "flex";
+    editorContent.style.flexDirection = "column";
+    editorContent.style.gap = "12px";
+    editorContent.innerHTML = "";
+
+    if(edge){
+      const from = state.nodes[edge.from], to = state.nodes[edge.to];
+      const title = el("div", { class: "panel-title" }, null); title.textContent = "CONNECTION";
+      editorContent.appendChild(title);
+      const info = document.createElement("div");
+      info.className = "panel-hint";
+      info.innerHTML = `<b>${escapeHtml(from ? (from.title || "Untitled") : "?")}</b> → <b>${escapeHtml(to ? (to.title || "Untitled") : "?")}</b>`;
+      editorContent.appendChild(info);
+
+      editorContent.appendChild(fieldSideChooser(
+        `Leaves "${from ? (from.title || "Untitled") : "?"}" from`,
+        edge.fromSide,
+        v => { edge.fromSide = v; scheduleSave(); render(); renderPanel(); }
+      ));
+      editorContent.appendChild(fieldSideChooser(
+        `Joins "${to ? (to.title || "Untitled") : "?"}" at`,
+        edge.toSide,
+        v => { edge.toSide = v; scheduleSave(); render(); renderPanel(); }
+      ));
+
+      const actions = document.createElement("div");
+      actions.className = "panel-actions";
+      const delBtn = document.createElement("button");
+      delBtn.className = "tb-btn danger"; delBtn.textContent = "Delete connection";
+      delBtn.addEventListener("click", () => { deleteEdge(edge.id); scheduleSave(); renderAll(); });
+      actions.appendChild(delBtn);
+      editorContent.appendChild(actions);
+      return;
+    }
+
+    if(node.kind === "header"){
+      const title = document.createElement("div"); title.className = "panel-title"; title.textContent = "SECTION LABEL";
+      editorContent.appendChild(title);
+      editorContent.appendChild(fieldText("Label text", node.title, v => { node.title = v; scheduleSave(); render(); }));
+      const actions = document.createElement("div"); actions.className = "panel-actions";
+      const delBtn = document.createElement("button"); delBtn.className = "tb-btn danger"; delBtn.textContent = "Delete label";
+      delBtn.addEventListener("click", () => { deleteNode(node.id); scheduleSave(); renderAll(); });
+      actions.appendChild(delBtn);
+      editorContent.appendChild(actions);
+      return;
+    }
+
+    const title = document.createElement("div"); title.className = "panel-title"; title.textContent = "NODE";
+    editorContent.appendChild(title);
+
+    editorContent.appendChild(fieldText("Title", node.title, v => { node.title = v; scheduleSave(); render(); }, "title-input"));
+    editorContent.appendChild(fieldText("Subtitle (optional)", node.subtitle, v => { node.subtitle = v; scheduleSave(); render(); }));
+
+    // tag chooser
+    const tagField = document.createElement("div"); tagField.className = "field";
+    const tagLabel = document.createElement("label"); tagLabel.className = "field-label"; tagLabel.textContent = "Type";
+    tagField.appendChild(tagLabel);
+    const tagRow = document.createElement("div"); tagRow.className = "tag-row";
+    [["scene","Scene"],["choice","Choice"],["note","Note"]].forEach(([val,label]) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "tag-choice-btn" + (node.tag === val ? " active" : "");
+      b.dataset.tag = val; b.textContent = label;
+      b.addEventListener("click", () => { node.tag = val; scheduleSave(); render(); renderPanel(); });
+      tagRow.appendChild(b);
+    });
+    tagField.appendChild(tagRow);
+    editorContent.appendChild(tagField);
+
+    editorContent.appendChild(fieldTextarea("Body text", node.body, v => { node.body = v; scheduleSave(); render(); }));
+
+    // variables
+    const varsField = document.createElement("div"); varsField.className = "field";
+    const varsLabel = document.createElement("label"); varsLabel.className = "field-label"; varsLabel.textContent = "Variables";
+    varsField.appendChild(varsLabel);
+    const varsList = document.createElement("div");
+    varsList.style.display = "flex"; varsList.style.flexDirection = "column"; varsList.style.gap = "5px";
+    (node.vars || []).forEach((pair, idx) => {
+      const row = document.createElement("div"); row.className = "var-row";
+      const kInput = document.createElement("input"); kInput.type = "text"; kInput.placeholder = "variable_name"; kInput.value = pair.k || "";
+      kInput.style.fontFamily = "var(--font-mono)"; kInput.style.fontSize = "12px";
+      kInput.addEventListener("input", () => { pair.k = kInput.value; scheduleSave(); render(); });
+      const vInput = document.createElement("input"); vInput.type = "text"; vInput.placeholder = "TRUE"; vInput.value = pair.v || "";
+      vInput.style.fontFamily = "var(--font-mono)"; vInput.style.fontSize = "12px";
+      vInput.addEventListener("input", () => { pair.v = vInput.value; scheduleSave(); render(); });
+      const rmBtn = document.createElement("button"); rmBtn.textContent = "×";
+      rmBtn.addEventListener("click", () => { node.vars.splice(idx, 1); scheduleSave(); render(); renderPanel(); });
+      row.appendChild(kInput); row.appendChild(vInput); row.appendChild(rmBtn);
+      varsList.appendChild(row);
+    });
+    varsField.appendChild(varsList);
+    const addVarBtn = document.createElement("button"); addVarBtn.id = "add-var-btn"; addVarBtn.textContent = "+ Add variable";
+    addVarBtn.addEventListener("click", () => { node.vars = node.vars || []; node.vars.push({ k: "", v: "" }); scheduleSave(); render(); renderPanel(); });
+    varsField.appendChild(addVarBtn);
+    editorContent.appendChild(varsField);
+
+    const actions = document.createElement("div"); actions.className = "panel-actions";
+    const addChildBtn = document.createElement("button"); addChildBtn.className = "tb-btn primary"; addChildBtn.textContent = "+ Add child node";
+    addChildBtn.addEventListener("click", () => addChildTo(node.id));
+    actions.appendChild(addChildBtn);
+    const delBtn = document.createElement("button"); delBtn.className = "tb-btn danger"; delBtn.textContent = "Delete node";
+    delBtn.addEventListener("click", () => { if(confirm("Delete this node?")){ deleteNode(node.id); scheduleSave(); renderAll(); } });
+    actions.appendChild(delBtn);
+    editorContent.appendChild(actions);
+  }
+
+  function fieldText(labelText, value, onChange, idAttr){
+    const wrap = document.createElement("div"); wrap.className = "field";
+    const label = document.createElement("label"); label.className = "field-label"; label.textContent = labelText;
+    const input = document.createElement("input"); input.type = "text"; input.value = value || "";
+    if(idAttr) input.id = idAttr;
+    input.addEventListener("input", () => onChange(input.value));
+    wrap.appendChild(label); wrap.appendChild(input);
+    return wrap;
+  }
+  function fieldTextarea(labelText, value, onChange){
+    const wrap = document.createElement("div"); wrap.className = "field";
+    const label = document.createElement("label"); label.className = "field-label"; label.textContent = labelText;
+    const ta = document.createElement("textarea"); ta.value = value || "";
+    ta.addEventListener("input", () => onChange(ta.value));
+    wrap.appendChild(label); wrap.appendChild(ta);
+    return wrap;
+  }
+  function fieldSideChooser(labelText, value, onChange){
+    const wrap = document.createElement("div"); wrap.className = "field";
+    const label = document.createElement("label"); label.className = "field-label"; label.textContent = labelText;
+    wrap.appendChild(label);
+    const row = document.createElement("div"); row.className = "tag-row side-row";
+    [["", "Auto"], ["top", "Top"], ["right", "Right"], ["bottom", "Bottom"], ["left", "Left"]].forEach(([val, text]) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "tag-choice-btn side-choice-btn" + ((value || "") === val ? " active" : "");
+      b.textContent = text;
+      b.addEventListener("click", () => onChange(val || null));
+      row.appendChild(b);
+    });
+    wrap.appendChild(row);
+    return wrap;
+  }
+  function focusTitleField(){
+    setTimeout(() => {
+      const input = document.getElementById("title-input");
+      if(input){ input.focus(); input.select(); }
+    }, 30);
+  }
+  function escapeHtml(s){
+    const d = document.createElement("div"); d.textContent = s == null ? "" : s; return d.innerHTML;
+  }
+
+  function renderAll(){
+    render();
+    renderPanel();
+  }
+
+  // ---------------------------------------------------------------
+  // Toolbar actions
+  // ---------------------------------------------------------------
+  document.getElementById("btn-add-root").addEventListener("click", () => {
+    const id = uid("n");
+    const spot = findSpotBelowAll(NODE_WIDTH, 60);
+    state.nodes[id] = { id, kind: "node", tag: "scene", title: "New scene", subtitle: "", body: "", vars: [], seq: takeSeq(), x: spot.x, y: spot.y };
+    selection = { type: "node", id };
+    scheduleSave(); renderAll(); fitToView(); focusTitleField();
+  });
+
+  document.getElementById("btn-add-header").addEventListener("click", () => {
+    const id = uid("n");
+    const spot = findSpotBelowAll(260, 42);
+    state.nodes[id] = { id, kind: "header", title: "NEW SECTION", seq: takeSeq(), x: spot.x, y: spot.y };
+    selection = { type: "node", id };
+    scheduleSave(); renderAll(); fitToView(); focusTitleField();
+  });
+
+  document.getElementById("btn-auto-arrange").addEventListener("click", () => {
+    if(confirm("Tidy up the whole board? This repositions every node — you can still drag things afterwards.")){
+      autoArrange();
+    }
+  });
+
+  const connectBanner = document.getElementById("connect-banner");
+  const connectBtn = document.getElementById("btn-connect");
+  function setConnectMode(on){
+    connectMode = on;
+    connectSource = null;
+    connectBtn.classList.toggle("active", on);
+    connectBanner.classList.toggle("show", on);
+    document.getElementById("connect-banner-text").textContent = "Click a node to start a connection";
+    canvasWrap.classList.toggle("connect-mode", on);
+    renderAll();
+  }
+  connectBtn.addEventListener("click", () => setConnectMode(!connectMode));
+  document.getElementById("connect-cancel").addEventListener("click", () => setConnectMode(false));
+
+  document.getElementById("btn-new").addEventListener("click", () => {
+    if(confirm("Start a new graph? This clears the current one (export JSON first if you want to keep it).")){
+      state = emptyState();
+      selection = { type: null, id: null };
+      scheduleSave(); renderAll(); fitToView();
+    }
+  });
+
+  document.getElementById("btn-help").addEventListener("click", () => document.getElementById("help-overlay").classList.add("show"));
+  document.getElementById("help-close").addEventListener("click", () => document.getElementById("help-overlay").classList.remove("show"));
+  document.getElementById("help-overlay").addEventListener("click", (ev) => { if(ev.target.id === "help-overlay") ev.currentTarget.classList.remove("show"); });
+
+  // ---------------------------------------------------------------
+  // File-link modal
+  // ---------------------------------------------------------------
+  function openFileLinkModal(){
+    const unsupportedEl = document.getElementById("filelink-unsupported");
+    const createBtn = document.getElementById("filelink-create");
+    const openBtn = document.getElementById("filelink-open");
+    const unlinkBtn = document.getElementById("filelink-unlink");
+    const subEl = document.getElementById("filelink-sub");
+    const driveUnlinkBtn = document.getElementById("filelink-drive-unlink");
+    const driveSignoutBtn = document.getElementById("filelink-drive-signout");
+    const standaloneNotice = document.getElementById("filelink-standalone-notice");
+
+    if(!FS_ACCESS_SUPPORTED){
+      unsupportedEl.style.display = "block";
+      createBtn.style.display = "none";
+      openBtn.style.display = "none";
+      unlinkBtn.style.display = "none";
+    } else {
+      unsupportedEl.style.display = "none";
+      createBtn.style.display = "block";
+      openBtn.style.display = "block";
+      unlinkBtn.style.display = linkedFileHandle ? "block" : "none";
+    }
+
+    if(linkedFileHandle){
+      subEl.textContent = `Currently autosaving to "${linkedFileName}". Pick a different file, or stop.`;
+    } else if(linkedDriveFileId){
+      subEl.textContent = `Currently autosaving to Google Drive: "${linkedDriveFileName}". Pick a different file, or stop.`;
+    } else {
+      subEl.textContent = FS_ACCESS_SUPPORTED
+        ? "Link a file — on this device or in Google Drive — and every change autosaves straight to it, no more manual exports."
+        : "Link a file in Google Drive — every change autosaves straight to it, no more manual exports.";
+    }
+
+    driveUnlinkBtn.style.display = linkedDriveFileId ? "block" : "none";
+    driveSignoutBtn.style.display = driveAccessToken ? "block" : "none";
+
+    const isStandalone = window.navigator.standalone || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+    standaloneNotice.style.display = isStandalone ? "block" : "none";
+
+    document.getElementById("filelink-overlay").classList.add("show");
+  }
+  function closeFileLinkModal(){
+    document.getElementById("filelink-overlay").classList.remove("show");
+  }
+
+  function closeDrivePicker(){
+    document.getElementById("drivepicker-overlay").classList.remove("show");
+  }
+
+  function openDrivePicker(files){
+    const list = document.getElementById("drivepicker-list");
+    const empty = document.getElementById("drivepicker-empty");
+    list.innerHTML = "";
+    if(!files.length){
+      empty.style.display = "block";
+    } else {
+      empty.style.display = "none";
+      files.forEach((f) => {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "drivepicker-row";
+        const nameEl = document.createElement("span");
+        nameEl.className = "name";
+        nameEl.textContent = f.name;
+        const metaEl = document.createElement("span");
+        metaEl.className = "meta";
+        metaEl.textContent = f.modifiedTime ? "Edited " + new Date(f.modifiedTime).toLocaleString() : "";
+        row.appendChild(nameEl);
+        row.appendChild(metaEl);
+        row.addEventListener("click", () => selectDriveFile(f));
+        list.appendChild(row);
+      });
+    }
+    document.getElementById("drivepicker-overlay").classList.add("show");
+  }
+  document.getElementById("btn-link-file").addEventListener("click", openFileLinkModal);
+  document.getElementById("filelink-close").addEventListener("click", closeFileLinkModal);
+  document.getElementById("filelink-overlay").addEventListener("click", (ev) => { if(ev.target.id === "filelink-overlay") closeFileLinkModal(); });
+  document.getElementById("filelink-create").addEventListener("click", async () => { if(await linkNewFile()) closeFileLinkModal(); });
+  document.getElementById("filelink-open").addEventListener("click", async () => { if(await linkExistingFile()) closeFileLinkModal(); });
+  document.getElementById("filelink-unlink").addEventListener("click", () => { unlinkFile(); closeFileLinkModal(); });
+  document.getElementById("filelink-drive-create").addEventListener("click", async () => { if(await linkNewDriveFile()) closeFileLinkModal(); });
+  document.getElementById("filelink-drive-open").addEventListener("click", () => { linkExistingDriveFile(); });
+  document.getElementById("filelink-drive-unlink").addEventListener("click", () => { unlinkDrive(); closeFileLinkModal(); });
+  document.getElementById("filelink-drive-signout").addEventListener("click", () => { driveSignOut(); openFileLinkModal(); });
+  document.getElementById("drivepicker-close").addEventListener("click", closeDrivePicker);
+  document.getElementById("drivepicker-overlay").addEventListener("click", (ev) => { if(ev.target.id === "drivepicker-overlay") closeDrivePicker(); });
+  document.getElementById("btn-drive-reconnect").addEventListener("click", async () => {
+    try{ await driveSignIn(true); scheduleSave(); }
+    catch(err){ alert(err && err.message ? err.message : "Couldn't reconnect to Google Drive."); }
+  });
+
+  function downloadBlob(blob, filename){
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+
+  document.getElementById("btn-export-json").addEventListener("click", async () => {
+    if(FS_ACCESS_SUPPORTED){
+      await linkNewFile();
+      return;
+    }
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+    downloadBlob(blob, "story-flow.json");
+  });
+
+  document.getElementById("btn-import-json").addEventListener("click", async () => {
+    if(FS_ACCESS_SUPPORTED){
+      await linkExistingFile();
+      return;
+    }
+    document.getElementById("file-import").click();
+  });
+  document.getElementById("file-import").addEventListener("change", (ev) => {
+    const file = ev.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try{
+        const parsed = JSON.parse(reader.result);
+        if(!parsed.nodes || !parsed.edges) throw new Error("bad format");
+        state = parsed;
+        normalizeState();
+        selection = { type: null, id: null };
+        scheduleSave(); renderAll(); fitToView();
+      }catch(e){
+        alert("That file doesn't look like a Story Flow JSON export.");
+      }
+    };
+    reader.readAsText(file);
+    ev.target.value = "";
+  });
+
+  function buildExportSvgString(){
+    const layout = lastLayout || getRenderModel();
+    const b = layout.bounds;
+    const pad = 24;
+    const contentW = Math.max(b.maxX - b.minX, 1);
+    const contentH = Math.max(b.maxY - b.minY, 1);
+    const w = contentW + pad * 2, h = contentH + pad * 2;
+    const clone = viewport.cloneNode(true);
+    clone.removeAttribute("transform");
+    clone.setAttribute("transform", `translate(${pad - b.minX},${pad - b.minY})`);
+    clone.querySelectorAll(".node-affordance").forEach(n => n.remove());
+    clone.querySelectorAll(".edge-hit").forEach(n => n.remove());
+    clone.querySelectorAll(".selected").forEach(n => n.classList.remove("selected"));
+    clone.querySelectorAll(".connect-src").forEach(n => n.classList.remove("connect-src"));
+
+    const styleText = `
+      .node-rect{ fill:#FFFFFF; stroke:#D7DCE2; stroke-width:1.4; }
+      .header-rect{ fill:#E3E7EC; stroke:#C7CDD6; stroke-width:1.2; }
+      .title-line{ font-family:'IBM Plex Mono',monospace; font-weight:700; fill:#1A1D23; }
+      .subtitle-line{ font-family:'IBM Plex Mono',monospace; font-weight:500; fill:#5B6270; }
+      .body-line{ font-family:'IBM Plex Sans',sans-serif; font-weight:400; fill:#1A1D23; }
+      .var-line{ font-family:'IBM Plex Mono',monospace; font-style:italic; font-weight:500; fill:#2F5D9C; }
+      .header-text{ font-family:'IBM Plex Mono',monospace; font-weight:700; fill:#1A1D23; }
+      .edge-path{ fill:none; stroke:#96A0AC; stroke-width:1.6; }
+    `;
+    const svgOut = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+      <defs><style>${styleText}</style>
+        <marker id="arrowhead" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+          <path d="M0,0 L7,3 L0,6 Z" fill="#7C8695"></path>
+        </marker>
+      </defs>
+      <rect x="0" y="0" width="${w}" height="${h}" fill="#FFFFFF"></rect>
+      ${clone.innerHTML}
+    </svg>`;
+    return svgOut;
+  }
+
+  document.getElementById("btn-export-svg").addEventListener("click", () => {
+    const svgStr = buildExportSvgString();
+    const blob = new Blob([svgStr], { type: "image/svg+xml" });
+    downloadBlob(blob, "story-flow.svg");
+  });
+
+  document.getElementById("btn-export-png").addEventListener("click", () => {
+    const svgStr = buildExportSvgString();
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(svgStr, "image/svg+xml");
+    const wAttr = parseFloat(doc.documentElement.getAttribute("width"));
+    const hAttr = parseFloat(doc.documentElement.getAttribute("height"));
+    const scale = 2;
+    const img = new Image();
+    const svgBlob = new Blob([svgStr], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(svgBlob);
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = wAttr * scale; canvas.height = hAttr * scale;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#FFFFFF"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.scale(scale, scale);
+      ctx.drawImage(img, 0, 0);
+      canvas.toBlob(blob => { downloadBlob(blob, "story-flow.png"); URL.revokeObjectURL(url); }, "image/png");
+    };
+    img.onerror = () => { alert("Couldn't render PNG export — try Export SVG instead."); URL.revokeObjectURL(url); };
+    img.src = url;
+  });
+
+  // ---------------------------------------------------------------
+  // Keyboard shortcuts
+  // ---------------------------------------------------------------
+  window.addEventListener("keydown", (ev) => {
+    const tag = (ev.target.tagName || "").toLowerCase();
+    if(tag === "input" || tag === "textarea") return;
+    if(ev.key === "Escape"){
+      if(connectMode) setConnectMode(false);
+      else { selection = { type: null, id: null }; renderAll(); }
+    }
+    if((ev.key === "Delete" || ev.key === "Backspace") && selection.id){
+      if(selection.type === "node"){ deleteNode(selection.id); scheduleSave(); renderAll(); }
+      else if(selection.type === "edge"){ deleteEdge(selection.id); scheduleSave(); renderAll(); }
+    }
+  });
+
+  // ---------------------------------------------------------------
+  // Boot
+  // ---------------------------------------------------------------
+  async function boot(){
+    await loadInitial();
+    renderAll();
+    fitToView();
+    updateLinkedFileUI();
+    if(document.fonts && document.fonts.ready){
+      document.fonts.ready.then(() => { render(); fitToView(); });
+    }
+    if(FS_ACCESS_SUPPORTED){
+      openFileLinkModal();
+    }
+  }
+  window.addEventListener("resize", () => fitToView());
+  boot();
+
+})();
+</script>
+</body>
+</html>
